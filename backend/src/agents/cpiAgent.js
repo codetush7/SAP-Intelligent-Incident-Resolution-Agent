@@ -157,6 +157,24 @@ async function processIncident(incidentData) {
   // Step 4 — Category
   const category = ERROR_CATEGORIES[incidentData.errorCode] || 'GENERAL';
 
+  // Step 4.5 — Prevent duplicate tickets for the same iFlow issue
+  const existingTicket = dataStore.getTickets().find(t =>
+    t.status !== 'RESOLVED' &&
+    ((incidentData.sapMessageGuid && t.sapMessageGuid === incidentData.sapMessageGuid) ||
+     (incidentData.issueFingerprint && t.issueFingerprint === `${incidentData.iflow || ''}|${incidentData.errorCode || ''}|${incidentData.errorMessage || ''}`))
+  );
+
+  if (existingTicket) {
+    logger.info(`[AI Agent] Duplicate issue detected; existing ticket ${existingTicket.ticketNumber} will be reused.`);
+    broadcastEvent('ticket_duplicate', {
+      ticketNumber: existingTicket.ticketNumber,
+      issue: incidentData,
+      message: `Duplicate issue detected for ${incidentData.iflow || incidentData.interface}. No new ticket created.`,
+      timestamp: new Date().toISOString()
+    });
+    return existingTicket;
+  }
+
   // Step 5 — Create internal ticket
   const ticket = dataStore.createTicket({
     title: analysis.suggestedTitle || `${incidentData.errorCode} - ${incidentData.interface}`,
@@ -167,6 +185,15 @@ async function processIncident(incidentData) {
     assignedTeam: team,
     interface: incidentData.interface,
     iflow: incidentData.iflow,
+    packageName: incidentData.packageName,
+    packageId: incidentData.packageId,
+    iflowId: incidentData.iflowId,
+    errorId: incidentData.errorId,
+    errorTimestamp: incidentData.errorTimestamp,
+    adapterDetails: incidentData.adapterDetails,
+    protocol: incidentData.protocol,
+    errorMessage: incidentData.errorMessage,
+    issueFingerprint: `${incidentData.iflow || ''}|${incidentData.errorCode || ''}|${incidentData.errorMessage || ''}`,
     rootCause: analysis.rootCause,
     recommendation: analysis.recommendation,
     evidence: analysis.evidence,

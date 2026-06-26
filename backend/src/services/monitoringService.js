@@ -39,6 +39,37 @@ async function checkMessageProcessingLogs() {
     const errorInfo = await getMessageErrorInfo(newFailure.MessageGuid);
     const runs = await getMessageRuns(newFailure.MessageGuid);
     const lastRun = runs[runs.length - 1] || {};
+    const protocol = lastRun.TransportProtocol || lastRun.Protocol || lastRun.AdapterType || lastRun.Channel || lastRun.Transport || 'Unknown';
+    const adapterDetails = [lastRun.AdapterName, lastRun.AdapterType, lastRun.Channel, lastRun.Transport].filter(Boolean).join(' | ') || newFailure.Sender || newFailure.Receiver || 'Unknown';
+
+    let packageName = newFailure.IntegrationFlowPackageName || newFailure.PackageName || newFailure.IntegrationFlowPackageId || newFailure.PackageId || null;
+    let packageId = newFailure.IntegrationFlowPackageId || newFailure.PackageId || null;
+    let iflowName = newFailure.IntegrationFlowName || null;
+    let iflowId = newFailure.IntegrationFlowId || newFailure.IntegrationFlowName || null;
+
+    if ((!packageName || !packageId || !iflowId) && newFailure.IntegrationFlowName) {
+      try {
+        const { getIntegrationFlows } = require('./sapCpiService');
+        const integrationFlows = await getIntegrationFlows();
+        const matchedFlow = integrationFlows.find(flow =>
+          flow.Name === newFailure.IntegrationFlowName ||
+          flow.IntegrationFlowName === newFailure.IntegrationFlowName ||
+          flow.ArtifactId === newFailure.IntegrationFlowId ||
+          flow.Id === newFailure.IntegrationFlowId ||
+          flow.Name === newFailure.IntegrationFlowId ||
+          flow.IntegrationFlowId === newFailure.IntegrationFlowId
+        );
+
+        if (matchedFlow) {
+          packageName = packageName || matchedFlow.IntegrationFlowPackageName || matchedFlow.PackageName || matchedFlow.Package || matchedFlow.PackageId;
+          packageId = packageId || matchedFlow.IntegrationFlowPackageId || matchedFlow.PackageId || matchedFlow.PackageUUID || matchedFlow.Id;
+          iflowName = iflowName || matchedFlow.IntegrationFlowName || matchedFlow.Name;
+          iflowId = iflowId || matchedFlow.IntegrationFlowId || matchedFlow.ArtifactId || matchedFlow.Id;
+        }
+      } catch (flowErr) {
+        logger.warn(`[Monitor] Could not enrich iflow/package metadata: ${flowErr.message}`);
+      }
+    }
 
     const errorCode = mapSAPErrorToCode({
       ErrorInformation: errorInfo,
@@ -48,33 +79,53 @@ async function checkMessageProcessingLogs() {
     return {
       errorCode,
       interface: newFailure.Receiver || newFailure.Sender || 'SAP CPI',
-      iflow: newFailure.IntegrationFlowName || 'Unknown iFlow',
+      iflow: iflowName || 'Unknown iFlow',
+      packageName: packageName || 'Unknown Package',
+      packageId,
+      iflowId,
+      errorId: newFailure.MessageGuid,
       errorMessage: errorInfo || newFailure.Status || 'Message processing failed',
       sapMessageGuid: newFailure.MessageGuid,
+      errorTimestamp: newFailure.LogEnd || newFailure.LogStart || new Date().toISOString(),
+      adapterDetails,
+      protocol,
       payload: {
         messageGuid: newFailure.MessageGuid,
         correlationId: newFailure.CorrelationId,
         sender: newFailure.Sender,
         receiver: newFailure.Receiver,
+        packageName: packageName || newFailure.IntegrationFlowPackageName || newFailure.PackageName,
+        packageId: packageId || newFailure.IntegrationFlowPackageId || newFailure.PackageId,
+        iflow: iflowName || newFailure.IntegrationFlowName,
+        iflowId,
+        status: newFailure.Status,
         logStart: newFailure.LogStart,
         logEnd: newFailure.LogEnd,
-        adapterName: lastRun.AdapterName
+        adapterName: lastRun.AdapterName,
+        adapterType: lastRun.AdapterType,
+        protocol,
+        errorInfo,
+        runs
       },
       timestamp: new Date().toISOString()
     };
   } catch (err) {
     logger.error(`[Monitor] SAP CPI message log check failed: ${err.message}`);
-    return {
-      errorCode: 'HTTP_403',
-      interface: 'SAP CPI API',
-      iflow: 'MessageProcessingLogs Access',
-      errorMessage: `Unable to read SAP CPI failed message logs: ${err.message}`,
-      payload: {
-        apiEndpoint: 'MessageProcessingLogs',
-        reason: err.message
-      },
+    dataStore.addMonitoringLog({
+      type: 'ERROR',
+      message: `SAP CPI API access failed: ${err.message}`,
+      status: 'ERROR'
+    });
+
+    broadcastEvent('monitoring_status', {
+      status: 'ERROR',
+      mode: 'LIVE',
+      message: `SAP CPI API access failed: ${err.message}`,
       timestamp: new Date().toISOString()
-    };
+    });
+
+    // Do not create a false CPI iFlow ticket when the SAP CPI API itself is inaccessible.
+    return null;
   }
 }
 

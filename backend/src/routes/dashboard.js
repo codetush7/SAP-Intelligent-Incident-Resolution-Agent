@@ -9,6 +9,54 @@ router.get('/stats', (req, res) => {
   const stats = dataStore.getStats();
   const monitoring = getMonitoringStatus();
 
+  const recentIssues = dataStore.getTickets()
+    .filter(t => !!t.errorCode && t.iflow && !t.iflow.includes('MessageProcessingLogs Access'))
+    .slice(0, 5)
+    .map(t => {
+      let parsedPayload = {};
+      if (typeof t.payload === 'string') {
+        try {
+          parsedPayload = JSON.parse(t.payload);
+        } catch (err) {
+          parsedPayload = {};
+        }
+      } else if (typeof t.payload === 'object' && t.payload !== null) {
+        parsedPayload = t.payload;
+      }
+
+      const errorId = t.errorId || t.sapMessageGuid || parsedPayload.messageGuid || parsedPayload.MessageGuid || parsedPayload.errorId || parsedPayload.ErrorId || null;
+      const adapterDetails = t.adapterDetails || parsedPayload.adapterDetails || [parsedPayload.AdapterName, parsedPayload.adapterType, parsedPayload.Channel, parsedPayload.Transport, parsedPayload.TransportProtocol].filter(Boolean).join(' | ') || null;
+      const protocol = t.protocol || parsedPayload.protocol || parsedPayload.TransportProtocol || parsedPayload.Transport || parsedPayload.Protocol || null;
+      const packageName = t.packageName || parsedPayload.packageName || parsedPayload.IntegrationFlowPackageName || parsedPayload.PackageName || null;
+      const packageId = t.packageId || parsedPayload.packageId || parsedPayload.IntegrationFlowPackageId || parsedPayload.PackageId || null;
+      const iflowId = t.iflowId || parsedPayload.iflowId || parsedPayload.IntegrationFlowId || parsedPayload.IntegrationFlowId || null;
+      const errorMessage = t.errorMessage || t.description || t.rootCause || t.evidence || parsedPayload.errorInfo || parsedPayload.errorMessage || parsedPayload.Status || (typeof t.payload === 'string' ? t.payload : JSON.stringify(t.payload || {}));
+      const status = t.status || parsedPayload.Status || null;
+      const priority = t.priority || parsedPayload.priority || null;
+
+      return {
+        ticketNumber: t.ticketNumber,
+        title: t.title,
+        interface: t.interface || parsedPayload.interface || parsedPayload.receiver || parsedPayload.sender || null,
+        iflow: t.iflow || parsedPayload.iflow || parsedPayload.IntegrationFlowName || parsedPayload.IntegrationFlowName || null,
+        packageName,
+        packageId,
+        iflowId,
+        errorCode: t.errorCode,
+        errorId,
+        errorMessage,
+        payload: parsedPayload,
+        adapterDetails,
+        protocol,
+        timestamp: t.errorTimestamp || t.createdAt || parsedPayload.timestamp || parsedPayload.LogEnd || parsedPayload.LogStart || new Date().toISOString(),
+        status,
+        priority,
+        sender: parsedPayload.sender || parsedPayload.Sender || null,
+        receiver: parsedPayload.receiver || parsedPayload.Receiver || null,
+        correlationId: parsedPayload.correlationId || parsedPayload.CorrelationId || null
+      };
+    });
+
   res.json({
     tickets: stats,
     monitoring: {
@@ -17,6 +65,7 @@ router.get('/stats', (req, res) => {
     },
     categories: getCategoryBreakdown(),
     recentActivity: dataStore.getMonitoringLogs().slice(0, 5),
+    recentIssues,
     timestamp: new Date().toISOString()
   });
 });

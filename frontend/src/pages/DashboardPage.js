@@ -133,6 +133,53 @@ export default function DashboardPage({ liveEvents = [], wsConnected }) {
         </div>
       </div>
 
+      {/* Recent CPI Errors */}
+      <div className="grid-2 mb-4">
+        <div className="card" style={{ gridColumn: 'span 2' }}>
+          <div className="card-header">
+            <span className="card-title"><AlertTriangle size={16} /> Recent CPI Errors</span>
+          </div>
+          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {stats.recentIssues && stats.recentIssues.length > 0 ? (
+              stats.recentIssues.map((issue, i) => (
+                <div key={i} style={{ padding: '12px 0', borderBottom: '1px solid rgba(30,45,74,0.4)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{issue.iflow || issue.title || 'Unknown Issue'}</p>
+                      <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                        {issue.interface ? `${issue.interface}` : ''}
+                        {issue.packageName ? ` • Package: ${issue.packageName}` : ''}
+                      </p>
+                      {issue.iflowId && <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>iFlow ID: {issue.iflowId}</p>}
+                    </div>
+                    <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{issue.timestamp ? new Date(issue.timestamp).toLocaleString() : ''}</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8, marginTop: 10 }}>
+                    <DetailLabel label="Error Code" value={issue.errorCode || 'N/A'} />
+                    <DetailLabel label="Error ID" value={issue.errorId || 'N/A'} />
+                    <DetailLabel label="Protocol" value={issue.protocol || 'N/A'} />
+                    <DetailLabel label="Adapter" value={issue.adapterDetails || 'N/A'} />
+                    <DetailLabel label="Ticket" value={issue.ticketNumber || 'N/A'} />
+                    <DetailLabel label="Status" value={issue.status || 'N/A'} />
+                    <DetailLabel label="Priority" value={issue.priority || 'N/A'} />
+                    <DetailLabel label="Sender" value={issue.sender || 'N/A'} />
+                    <DetailLabel label="Receiver" value={issue.receiver || 'N/A'} />
+                    <DetailLabel label="Correlation ID" value={issue.correlationId || 'N/A'} />
+                    <DetailLabel label="Package" value={issue.packageName || 'N/A'} />
+                    <DetailLabel label="iFlow ID" value={issue.iflowId || 'N/A'} />
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    <p style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{issue.errorMessage || 'No error detail available'}</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state"><p>No CPI issue details available yet.</p></div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Recent activity */}
       <div className="grid-2">
         <div className="card">
@@ -208,6 +255,15 @@ function MiniStat({ label, value, color }) {
       <div style={{ width: 10, height: 10, borderRadius: '50%', background: color, flexShrink: 0 }} />
       <span style={{ fontSize: 12, color: 'var(--text-secondary)', flex: 1 }}>{label}</span>
       <span style={{ fontSize: 18, fontWeight: 700, color }}>{value}</span>
+    </div>
+  );
+}
+
+function DetailLabel({ label, value }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{label}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-primary)', wordBreak: 'break-word' }}>{value}</span>
     </div>
   );
 }
