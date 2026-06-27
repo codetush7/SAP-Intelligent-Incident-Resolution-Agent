@@ -34,10 +34,10 @@ router.post('/', async (req, res) => {
     });
 
     // Auto-create ServiceNow if configured
-    if (process.env.FRESHDESK_API_KEY && process.env.FRESHDESK_DOMAIN && process.env.JIRA_BASE_URL !== 'https://your-org.atlassian.net') {
+    if (process.env.JIRA_BASE_URL && process.env.JIRA_API_TOKEN && process.env.JIRA_BASE_URL !== 'https://your-org.atlassian.net' && process.env.JIRA_BASE_URL !== 'https://your-org.atlassian.net') {
       try {
-        const { createTicket: createFD } = require('../services/freshdeskService');
-        const snow = await createFD(ticket);
+        const { createJiraIssue } = require('../services/jiraService');
+        const snow = await createJiraIssue(ticket);
         dataStore.updateTicket(ticket.id, {
           jiraId: snow.externalId,
           jiraKey: snow.externalNumber,

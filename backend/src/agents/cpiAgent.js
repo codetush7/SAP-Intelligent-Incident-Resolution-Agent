@@ -1,6 +1,9 @@
+const { classifyError } = require('../services/classificationService');
+const { sendAlertEmail } = require('../services/emailService');
 const logger = require('../utils/logger');
 const dataStore = require('../utils/dataStore');
 const { broadcastEvent } = require('../services/websocketService');
+const { normalizeFingerprint, createIssueFingerprint, createMessageFingerprint } = require('../utils/fingerprint');
 const Groq = require('groq-sdk');
 
 // ─── AI Provider Configuration ─────────────────────────────────────────────────
@@ -84,6 +87,16 @@ const ERROR_CATEGORIES = {
   'GENERAL_ERROR': 'GENERAL'
 };
 
+function normalizeErrorCode(errorCode) {
+  if (!errorCode) return '';
+  return String(errorCode)
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_')
+    .replace(/-/g, '_')
+    .replace(/[^A-Z0-9_]/g, '_');
+}
+
 // ─── AI Root Cause Analysis ───────────────────────────────────────────────────
 async function analyzeIncidentWithAI(incidentData) {
   logger.info(`[AI Agent] Grok analyzing: ${incidentData.errorCode}`);
@@ -117,8 +130,10 @@ Timestamp      : ${incidentData.timestamp || new Date().toISOString()}`;
       systemPrompt
     );
 
-    const clean = text.trim().replace(/```json|```/g, '').trim();
-    const analysis = JSON.parse(clean);
+    let clean = text.trim().replace(/```json|```/g, '').trim();
+    const jsonMatch = clean.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON in Grok response');
+    const analysis = JSON.parse(jsonMatch[0]);
     logger.info(`[AI Agent] Grok analysis complete for ${incidentData.errorCode}`);
     return analysis;
   } catch (err) {
@@ -147,22 +162,58 @@ async function processIncident(incidentData) {
   // Step 1 — Grok AI Root Cause Analysis
   const analysis = await analyzeIncidentWithAI(incidentData);
 
-  // Step 2 — Smart priority
-  const priorityFn = PRIORITY_RULES[incidentData.errorCode];
-  const priority = priorityFn ? priorityFn(incidentData) : 'MEDIUM';
+  // Step 2 — AI Classification (P1/P2/P3/P4)
+  const classification = classifyError({
+    ...incidentData,
+    rootCause: analysis.rootCause,
+    errorMessage: incidentData.errorMessage
+  });
 
-  // Step 3 — Team assignment
+  const PRIORITY_POOL = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+  const priority = PRIORITY_POOL[Math.floor(Math.random() * PRIORITY_POOL.length)];
+  const normalizedErrorCode = normalizeErrorCode(incidentData.errorCode);
+  const category = normalizedErrorCode && ERROR_CATEGORIES[normalizedErrorCode]
+    ? ERROR_CATEGORIES[normalizedErrorCode] : 'GENERAL';
   const team = TEAM_ASSIGNMENT[incidentData.interface] || TEAM_ASSIGNMENT['DEFAULT'];
 
-  // Step 4 — Category
-  const category = ERROR_CATEGORIES[incidentData.errorCode] || 'GENERAL';
+  logger.info(`[AI Agent] Classification: ${classification.priorityCode} | CreateJira: ${classification.createJira} | SendEmail: ${classification.sendEmail}`);
+
+  // P4 LOW — just log, no ticket, no Jira, no email
+  if (!classification.createJira) {
+    logger.info(`[AI Agent] P4/LOW issue detected — logging only, no ticket created`);
+    dataStore.addMonitoringLog({
+      type: 'INFO',
+      message: `P4 issue detected in ${incidentData.iflow || incidentData.interface} — logged only`,
+      status: 'OK'
+    });
+    return { ticket: null, analysis, classification };
+  }
+
 
   // Step 4.5 — Prevent duplicate tickets for the same iFlow issue
-  const existingTicket = dataStore.getTickets().find(t =>
-    t.status !== 'RESOLVED' &&
-    ((incidentData.sapMessageGuid && t.sapMessageGuid === incidentData.sapMessageGuid) ||
-     (incidentData.issueFingerprint && t.issueFingerprint === `${incidentData.iflow || ''}|${incidentData.errorCode || ''}|${incidentData.errorMessage || ''}`))
-  );
+  const incidentFingerprint = normalizeFingerprint(
+  createIssueFingerprint({
+    iflow: incidentData.iflow || incidentData.interface,
+    packageId: incidentData.packageId,
+    packageName: incidentData.packageName,
+    errorCode: incidentData.errorCode,
+    errorMessage: incidentData.errorMessage
+  })
+);
+
+const existingTicket = dataStore.getTickets().find(t => {
+  const ticketIssueFingerprint = t.issueFingerprint
+    ? normalizeFingerprint(t.issueFingerprint)
+    : normalizeFingerprint(createIssueFingerprint({
+      iflow: t.iflow || t.interface,
+      packageId: t.packageId,
+      packageName: t.packageName,
+      errorCode: t.errorCode,
+      errorMessage: t.errorMessage
+    }));
+
+  return incidentFingerprint && ticketIssueFingerprint && incidentFingerprint === ticketIssueFingerprint;
+});
 
   if (existingTicket) {
     logger.info(`[AI Agent] Duplicate issue detected; existing ticket ${existingTicket.ticketNumber} will be reused.`);
@@ -194,7 +245,13 @@ async function processIncident(incidentData) {
     adapterDetails: incidentData.adapterDetails,
     protocol: incidentData.protocol,
     errorMessage: incidentData.errorMessage,
-    issueFingerprint: `${incidentData.iflow || ''}|${incidentData.errorCode || ''}|${incidentData.errorMessage || ''}`,
+    issueFingerprint: createIssueFingerprint({
+      iflow: incidentData.iflow || incidentData.interface,
+      packageId: incidentData.packageId,
+      packageName: incidentData.packageName,
+      errorCode: incidentData.errorCode,
+      errorMessage: incidentData.errorMessage
+    }),
     rootCause: analysis.rootCause,
     recommendation: analysis.recommendation,
     evidence: analysis.evidence,
@@ -220,11 +277,13 @@ async function processIncident(incidentData) {
 
   // Step 6 — Auto-create Jira ticket if configured
   let jiraResult = null;
-  if (process.env.FRESHDESK_API_KEY &&
-    process.env.FRESHDESK_DOMAIN) {
-  try {
-    const { createTicket: createFreshdeskTicket } = require('../services/freshdeskService');
-    jiraResult = await createFreshdeskTicket(ticket);
+  // logger.info(`[Jira Debug] JIRA_BASE_URL=${process.env.JIRA_BASE_URL}, TOKEN_SET=${!!process.env.JIRA_API_TOKEN}`);
+  if (process.env.JIRA_BASE_URL &&
+    process.env.JIRA_API_TOKEN &&
+    process.env.JIRA_BASE_URL !== 'https://your-org.atlassian.net') {
+    try {
+      const { createJiraIssue } = require('../services/jiraService');
+      jiraResult = await createJiraIssue(ticket);
       dataStore.updateTicket(ticket.id, {
         jiraId: jiraResult.externalId,
         jiraKey: jiraResult.externalNumber,
@@ -240,6 +299,15 @@ async function processIncident(incidentData) {
       });
     } catch (jiraErr) {
       logger.error(`[AI Agent] Jira creation failed: ${jiraErr.message}`);
+    }
+  }
+
+  if (classification.sendEmail) {
+    try {
+      const updatedTicket = dataStore.getTicketById(ticket.id);
+      await sendAlertEmail(updatedTicket, jiraResult?.externalNumber);
+    } catch (emailErr) {
+      logger.error(`[Email] Alert send failed: ${emailErr.message}`);
     }
   }
 

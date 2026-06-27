@@ -68,7 +68,7 @@ export default function DashboardPage({ liveEvents = [], wsConnected }) {
         <StatCard label="Total Tickets" value={t.total || 0} color="blue" icon={<Ticket size={36} />} sub={`${t.aiAnalyzed || 0} AI analyzed`} />
         <StatCard label="Open Incidents" value={t.open || 0} color="red" icon={<AlertTriangle size={36} />} sub={`${t.inProgress || 0} in progress`} />
         <StatCard label="Resolved" value={t.resolved || 0} color="green" icon={<CheckCircle size={36} />} sub="Auto + manual" />
-        <StatCard label="Active Alerts" value={stats.monitoring?.alerts || 0} color="amber" icon={<Activity size={36} />} sub="Unacknowledged" />
+        <StatCard label="Active Alerts" value={stats.monitoring?.alerts ?? stats.monitoring?.activeAlerts ?? 0} color="amber" icon={<Activity size={36} />} sub="Unacknowledged" />
       </div>
 
       {/* Priority row */}

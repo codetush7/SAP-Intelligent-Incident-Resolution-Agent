@@ -1,7 +1,9 @@
+const SERVER_START_TIME = new Date();
 const cron = require('node-cron');
 const logger = require('../utils/logger');
 const dataStore = require('../utils/dataStore');
 const { broadcastEvent } = require('./websocketService');
+const { normalizeFingerprint, createIssueFingerprint, createMessageFingerprint } = require('../utils/fingerprint');
 
 function firstNonEmpty(...values) {
   return values.find(v => v !== undefined && v !== null && `${v}`.toString().trim() !== '') || null;
@@ -31,21 +33,49 @@ async function checkMessageProcessingLogs() {
 
     if (failed.length === 0) return null;
 
+    const recentFailed = failed.filter(msg => {
+    const logEndMs = parseInt(msg.LogEnd?.match(/\d+/)?.[0] || 0);
+    return logEndMs && new Date(logEndMs) > SERVER_START_TIME;
+  });
+
+  if (recentFailed.length === 0) return null;
+
     // Pick the most recent failure not already ticketed
     const existingTickets = dataStore.getTickets();
-    const newFailure = failed.find(msg => {
-      // Skip if same MessageGuid already ticketed
-      const guidMatch = existingTickets.some(t => t.sapMessageGuid === msg.MessageGuid);
-      if (guidMatch) return false;
+    const newFailure = recentFailed.find(msg => {
+      const failureFingerprint = createIssueFingerprint({
+        iflow: msg.IntegrationFlowName || msg.IntegrationFlowId || msg.ArtifactName,
+        packageId: msg.IntegrationArtifact?.PackageId || msg.PackageId || msg.IntegrationFlowPackageId || msg.PackageUUID,
+        packageName: msg.IntegrationFlowPackageName || msg.PackageName,
+        errorCode: mapSAPErrorToCode({
+          ErrorInformation: msg.ErrorInformation || msg.MessageText || '',
+          AdapterName: msg.AdapterName || ''
+        }),
+        errorMessage: msg.ErrorInformation || msg.MessageText || ''
+      });
+      // const messageFingerprint = createMessageFingerprint({ sapMessageGuid: msg.MessageGuid });
 
-      // Skip if same iFlow + Package + error within last 60 minutes
-      const cutoff = Date.now() - 60 * 60 * 1000;
-      const duplicateMatch = existingTickets.some(t =>
-        t.iflow === msg.IntegrationFlowName &&
-        t.packageId === msg.IntegrationArtifact?.PackageId &&
-        t.status !== 'RESOLVED' &&
-        new Date(t.createdAt).getTime() > cutoff
-      );
+      // Skip if same MessageGuid already ticketed
+      // const guidMatch = existingTickets.some(t => {
+      //   const ticketMessageFingerprint = createMessageFingerprint({ sapMessageGuid: t.sapMessageGuid });
+      //   return messageFingerprint && ticketMessageFingerprint && messageFingerprint === ticketMessageFingerprint;
+      // });
+      // if (guidMatch) return false;
+
+      // Skip if same issue fingerprint already ticketed
+      const duplicateMatch = existingTickets.some(t => {
+        const ticketFingerprint = t.issueFingerprint
+          ? normalizeFingerprint(t.issueFingerprint)
+          : createIssueFingerprint({
+            iflow: t.iflow || t.interface,
+            packageId: t.packageId,
+            packageName: t.packageName,
+            errorCode: t.errorCode,
+            errorId: t.errorId,
+            errorMessage: t.errorMessage
+          });
+        return ticketFingerprint && ticketFingerprint === failureFingerprint;
+      });
       if (duplicateMatch) return false;
 
       return true;
@@ -93,6 +123,16 @@ async function checkMessageProcessingLogs() {
       newFailure.TargetSystem,
       newFailure.ReceiverAddress,
       lastRun.TargetSystem
+    );
+
+    const protocolValue = firstNonEmpty(
+      lastRun.Protocol,
+      newFailure.Protocol,
+      lastRun.Transport,
+      newFailure.Transport,
+      lastRun.AdapterType,
+      lastRun.AdapterName,
+      'N/A'
     );
 
     const adapterDetails = firstNonEmpty(
@@ -181,13 +221,15 @@ async function checkMessageProcessingLogs() {
 
     return {
   errorCode,
-  interface: newFailure.IntegrationArtifact?.Name || 'SAP CPI',
-  iflow: newFailure.IntegrationFlowName,
-  iflowId: newFailure.IntegrationArtifact?.Id,
-  packageId: newFailure.IntegrationArtifact?.PackageId,
-  packageName: newFailure.IntegrationArtifact?.PackageName,
-  sender: newFailure.Sender,
-  receiver: newFailure.Receiver,
+  interface: newFailure.IntegrationArtifact?.Name || iflowName || 'SAP CPI',
+  iflow: iflowName || newFailure.IntegrationFlowName,
+  iflowId: iflowId || newFailure.IntegrationArtifact?.Id,
+  packageId: packageId || newFailure.IntegrationArtifact?.PackageId,
+  packageName: packageName || newFailure.IntegrationArtifact?.PackageName,
+  sender: sender || newFailure.Sender,
+  receiver: receiver || newFailure.Receiver,
+  adapterDetails,
+  protocol: protocolValue,
   correlationId: newFailure.CorrelationId,
   transactionId: newFailure.TransactionId,
   logLevel: newFailure.LogLevel,
@@ -257,7 +299,7 @@ async function checkJMSQueues() {
     }
     return null;
   } catch (err) {
-    logger.warn(`[Monitor] JMS check failed: ${err.message}`);
+    logger.debug(`[Monitor] JMS not available on this tenant`);
     return null;
   }
 }
@@ -287,9 +329,9 @@ async function checkCertificates() {
       const daysLeft = Math.floor((expiry - now) / (1000 * 60 * 60 * 24));
 
       if (daysLeft <= warningDays && daysLeft >= 0) {
-        // Check if already ticketed
+        // Check if already ticketed for this same certificate warning
         const existing = dataStore.getTickets().find(t =>
-          t.certName === cert.Hexalias && t.status !== 'RESOLVED'
+          t.certName === cert.Hexalias
         );
         if (existing) continue;
 
@@ -312,7 +354,7 @@ async function checkCertificates() {
     }
     return null;
   } catch (err) {
-    logger.warn(`[Monitor] Certificate check failed: ${err.message}`);
+    logger.debug(`[Monitor] Certificate API not available on this tenant`);
     return null;
   }
 }
@@ -330,6 +372,12 @@ async function checkIFlowStatus() {
     );
 
     if (!errored) return null;
+
+    const existing = dataStore.getTickets().find(t =>
+      t.iflow === errored.Name &&
+      t.errorCode === 'HTTP_500'
+    );
+    if (existing) return null;
 
     return {
       errorCode: 'HTTP_500',
@@ -386,46 +434,61 @@ async function runMonitoringCycle() {
 
   try {
     // Run all checks in parallel
-    const [msgIssue, jmsIssue, certIssue, iflowIssue] = await Promise.all([
-      checkMessageProcessingLogs(),
-      checkJMSQueues(),
-      checkCertificates(),
-      checkIFlowStatus()
-    ]);
+    const msgIssue = await checkMessageProcessingLogs();
+    const jmsIssue = await checkJMSQueues();
+    const certIssue = await checkCertificates();
+    const iflowIssue = await checkIFlowStatus();
 
-    const issues = [msgIssue, jmsIssue, certIssue, iflowIssue].filter(Boolean);
+    const rawIssues = [msgIssue, jmsIssue, certIssue, iflowIssue].filter(Boolean);
+    const issues = [];
+    const seenFingerprints = new Set();
+    const seenMessageIds = new Set();
+
+    for (const issue of rawIssues) {
+      const issueFp = createIssueFingerprint(issue);
+      const messageFp = createMessageFingerprint({ sapMessageGuid: issue.sapMessageGuid });
+      if (messageFp && seenMessageIds.has(messageFp)) continue;
+      if (issueFp && seenFingerprints.has(issueFp)) continue;
+      if (messageFp) seenMessageIds.add(messageFp);
+      if (issueFp) seenFingerprints.add(issueFp);
+      issues.push(issue);
+    }
 
     if (issues.length > 0) {
       logger.info(`[Monitor] Found ${issues.length} real issue(s)`);
 
       for (const issue of issues) {
-        const alert = dataStore.addAlert({
-          type: issue.errorCode,
-          severity: ['HTTP_503', 'QUEUE_THRESHOLD_EXCEEDED'].includes(issue.errorCode) ? 'CRITICAL' : 'HIGH',
-          message: issue.errorMessage
-        });
-
-        dataStore.addMonitoringLog({
-          type: 'ALERT',
-          message: `Issue detected: ${issue.errorCode} in ${issue.interface}`,
-          status: 'ALERT_CREATED'
-        });
-
-        broadcastEvent('new_alert', {
-          alert,
-          issue,
-          message: `🚨 ${issue.errorCode}: ${issue.errorMessage}`,
-          timestamp: new Date().toISOString()
-        });
-
-        // Auto-process with AI agent + ServiceNow
-        try {
-          const { processIncident } = require('../agents/cpiAgent');
-          await processIncident({ ...issue, timestamp: new Date().toISOString() });
-        } catch (agentErr) {
-          logger.error(`[Monitor] Agent processing failed: ${agentErr.message}`);
-        }
+      let result;
+      try {
+        const { processIncident } = require('../agents/cpiAgent');
+        result = await processIncident({ ...issue, timestamp: new Date().toISOString() });
+      } catch (agentErr) {
+        logger.error(`[Monitor] Agent processing failed: ${agentErr.message}`);
+        continue;
       }
+
+      // Skip alert creation if this was a duplicate (no new ticket) or P4/LOW (no ticket)
+      if (!result || !result.ticket) continue;
+
+      const alert = dataStore.addAlert({
+        type: issue.errorCode,
+        severity: ['HTTP_503', 'QUEUE_THRESHOLD_EXCEEDED'].includes(issue.errorCode) ? 'CRITICAL' : 'HIGH',
+        message: issue.errorMessage
+      });
+
+      dataStore.addMonitoringLog({
+        type: 'ALERT',
+        message: `Issue detected: ${issue.errorCode} in ${issue.interface}`,
+        status: 'ALERT_CREATED'
+      });
+
+      broadcastEvent('new_alert', {
+        alert,
+        issue,
+        message: `🚨 ${issue.errorCode}: ${issue.errorMessage}`,
+        timestamp: new Date().toISOString()
+      });
+    }
     } else {
       dataStore.addMonitoringLog({
         type: 'CHECK',

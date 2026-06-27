@@ -61,14 +61,22 @@ async function createJiraIssue(ticketData) {
           content: [{ type: 'text', text: descriptionText }]
         }]
       },
-      issuetype: { name: 'Bug' },
+      issuetype: { name: 'Story' },
       priority: { name: mapPriority(ticketData.priority) },
       labels: ['SAP-CPI', 'AI-Auto-Created', ticketData.category || 'GENERAL']
     }
   };
 
   const client = jiraClient();
-  const response = await client.post('/issue', body);
+  // logger.info(`[Jira Debug] Payload: ${JSON.stringify(body, null, 2)}`);
+  let response;
+try {
+      response = await client.post('/issue', body);
+    } catch (err) {
+      const detail = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+      logger.error(`[Jira] 400 detail: ${detail}`);
+      throw new Error(detail);
+    }
 
   logger.info(`[Jira] Issue created: ${response.data.key}`);
 

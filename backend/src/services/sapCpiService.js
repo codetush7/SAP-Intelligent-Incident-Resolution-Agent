@@ -63,9 +63,9 @@ async function getFailedMessages(top = 20) {
     timeout: 30000
   });
   const results = response.data?.d?.results || [];
-  if (results.length > 0) {
-    logger.info('[SAP DEBUG] First message fields: ' + JSON.stringify(results[0], null, 2));
-  }
+  // if (results.length > 0) {
+  //   logger.info('[SAP DEBUG] First message fields: ' + JSON.stringify(results[0], null, 2));
+  // }
   return results;
 }
 
@@ -240,10 +240,23 @@ async function healthCheck() {
 }
 
 // ─── Map SAP error details to our error codes ─────────────────────────────────
+function safeString(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
+}
+
 function mapSAPErrorToCode(msg) {
-  const errorInfo = (msg.ErrorInformation || '').toLowerCase();
-  const adapterName = (msg.AdapterName || '').toLowerCase();
-  const status = (msg.Status || '').toLowerCase();
+  const errorInfo = safeString(msg.ErrorInformation || msg.MessageText || msg.ErrorLog || '').toLowerCase();
+  const adapterName = safeString(msg.AdapterName || '').toLowerCase();
+  const status = safeString(msg.Status || '').toLowerCase();
 
   if (errorInfo.includes('401') || errorInfo.includes('unauthorized')) return 'HTTP_401';
   if (errorInfo.includes('403') || errorInfo.includes('forbidden')) return 'HTTP_403';
@@ -255,7 +268,7 @@ function mapSAPErrorToCode(msg) {
   if (errorInfo.includes('mapping') || errorInfo.includes('null') || errorInfo.includes('xslt')) return 'MAPPING_EXCEPTION';
   if (adapterName.includes('jms') || errorInfo.includes('queue')) return 'QUEUE_THRESHOLD_EXCEEDED';
   if (errorInfo.includes('data store') || errorInfo.includes('datastore')) return 'DATA_STORE_FAILURE';
-  if (adapterName.includes('https') || adapterName.includes('http')) return 'HTTP_500';
+  if (adapterName.includes('https') || adapterName.includes('http') || errorInfo.includes('http') || errorInfo.includes('responseexception')) return 'HTTP_500';
   return 'GENERAL_ERROR';
 }
 

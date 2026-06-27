@@ -8,6 +8,7 @@ const { getClientCount: wsClientCount } = require('../services/websocketService'
 router.get('/stats', (req, res) => {
   const stats = dataStore.getStats();
   const monitoring = getMonitoringStatus();
+  const activeAlerts = dataStore.getAlerts().filter(a => !a.acknowledged).length;
 
   const recentIssues = dataStore.getTickets()
     .filter(t => !!t.errorCode && t.iflow && !t.iflow.includes('MessageProcessingLogs Access'))
@@ -61,7 +62,9 @@ router.get('/stats', (req, res) => {
     tickets: stats,
     monitoring: {
       ...monitoring,
-      wsConnections: wsClientCount ? wsClientCount() : 0
+      wsConnections: wsClientCount ? wsClientCount() : 0,
+      alerts: activeAlerts,
+      activeAlerts
     },
     categories: getCategoryBreakdown(),
     recentActivity: dataStore.getMonitoringLogs().slice(0, 5),
@@ -99,7 +102,8 @@ function getCategoryBreakdown() {
   const tickets = dataStore.getTickets();
   const categories = {};
   tickets.forEach(t => {
-    categories[t.category] = (categories[t.category] || 0) + 1;
+    const name = (t.category || 'GENERAL').toUpperCase();
+    categories[name] = (categories[name] || 0) + 1;
   });
   return Object.entries(categories).map(([name, count]) => ({ name, count }));
 }
