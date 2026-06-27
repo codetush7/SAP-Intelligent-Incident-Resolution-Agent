@@ -220,12 +220,11 @@ async function processIncident(incidentData) {
 
   // Step 6 — Auto-create Jira ticket if configured
   let jiraResult = null;
-  if (process.env.JIRA_BASE_URL &&
-      process.env.JIRA_API_TOKEN &&
-      process.env.JIRA_BASE_URL !== 'https://your-org.atlassian.net') {
-    try {
-      const { createJiraIssue } = require('../services/jiraService');
-      jiraResult = await createJiraIssue(ticket);
+  if (process.env.FRESHDESK_API_KEY &&
+    process.env.FRESHDESK_DOMAIN) {
+  try {
+    const { createTicket: createFreshdeskTicket } = require('../services/freshdeskService');
+    jiraResult = await createFreshdeskTicket(ticket);
       dataStore.updateTicket(ticket.id, {
         jiraId: jiraResult.externalId,
         jiraKey: jiraResult.externalNumber,
