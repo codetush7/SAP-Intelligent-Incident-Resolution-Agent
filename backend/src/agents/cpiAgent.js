@@ -186,8 +186,9 @@ async function processIncident(incidentData) {
     interface: incidentData.interface,
     iflow: incidentData.iflow,
     packageName: incidentData.packageName,
-    packageId: incidentData.packageId,
     iflowId: incidentData.iflowId,
+    sender: incidentData.sender,
+    receiver: incidentData.receiver,
     errorId: incidentData.errorId,
     errorTimestamp: incidentData.errorTimestamp,
     adapterDetails: incidentData.adapterDetails,
@@ -206,7 +207,15 @@ async function processIncident(incidentData) {
     aiAnalyzed: true,
     certName: incidentData.certName,
     daysUntilExpiry: incidentData.daysUntilExpiry,
-    queueSize: incidentData.queueSize
+    queueSize: incidentData.queueSize,
+    packageId: incidentData.packageId,
+    packageName: incidentData.packageName,
+    iflowId: incidentData.iflowId,
+    sender: incidentData.sender,
+    receiver: incidentData.receiver,
+    correlationId: incidentData.correlationId,
+    errorTimestamp: incidentData.errorTimestamp,
+    monitorUrl: incidentData.monitorUrl,
   });
 
   // Step 6 — Auto-create Jira ticket if configured

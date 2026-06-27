@@ -62,8 +62,11 @@ async function getFailedMessages(top = 20) {
     headers: sapHeaders(token),
     timeout: 30000
   });
-
-  return response.data?.d?.results || [];
+  const results = response.data?.d?.results || [];
+  if (results.length > 0) {
+    logger.info('[SAP DEBUG] First message fields: ' + JSON.stringify(results[0], null, 2));
+  }
+  return results;
 }
 
 // ─── Message Processing Log Error Info ────────────────────────────────────────
@@ -127,7 +130,54 @@ async function getDataStoreEntries() {
     return [];
   }
 }
+async function resolveIntegrationArtifactId(key) {
+  if (!key) return null;
+  const flows = await getIntegrationFlows();
+  const match = flows.find(f =>
+    f.ArtifactId === key ||
+    f.Id === key ||
+    f.Name === key ||
+    f.IntegrationFlowName === key ||
+    f.IntegrationFlowId === key
+  );
+  return match?.ArtifactId || match?.Id || null;
+}
 
+async function fixIntegrationFlow(artifactKey) {
+  const artifactId = await resolveIntegrationArtifactId(artifactKey);
+  if (!artifactId) {
+    throw new Error('Unable to resolve CPI integration flow artifact id for fix action.');
+  }
+
+  if (process.env.SAP_CPI_ENABLE_FIX !== 'true') {
+    throw new Error('SAP CPI fix actions are disabled. Set SAP_CPI_ENABLE_FIX=true to enable real fix actions.');
+  }
+
+  const token = await getSAPToken();
+  const candidateActions = ['Restart', 'Start'];
+  let lastError = null;
+
+  for (const action of candidateActions) {
+    const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/IntegrationRuntimeArtifacts('${artifactId}')/${action}`;
+    try {
+      const response = await axios.post(url, null, {
+        headers: sapHeaders(token),
+        timeout: 30000
+      });
+      logger.info(`[SAP CPI] Fix action ${action} executed for artifact ${artifactId}`);
+      return { action, result: response.data };
+    } catch (err) {
+      lastError = err;
+      const status = err.response?.status;
+      if ([404, 405, 501].includes(status)) {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error(`SAP CPI fix action failed for artifact ${artifactId}: ${formatAxiosError(lastError)}`);
+}
 // ─── JMS Resources ────────────────────────────────────────────────────────────
 async function getJMSResources() {
   const token = await getSAPToken();
@@ -219,6 +269,7 @@ module.exports = {
   getJMSResources,
   getCertificates,
   getSecurityMaterial,
+  fixIntegrationFlow,
   healthCheck,
   mapSAPErrorToCode
 };

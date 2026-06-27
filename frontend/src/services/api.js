@@ -27,6 +27,7 @@ export const ticketsAPI = {
   create: (data) => api.post('/tickets', data),
   update: (id, data) => api.patch(`/tickets/${id}`, data),
   delete: (id) => api.delete(`/tickets/${id}`),
+  fix: (id, data = {}) => api.post(`/tickets/${id}/fix`, data),
   syncServiceNow: (id) => api.post(`/tickets/${id}/sync-servicenow`),
   syncJira: (id) => api.post(`/tickets/${id}/sync-jira`)
 };

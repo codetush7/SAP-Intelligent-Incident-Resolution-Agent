@@ -3,6 +3,10 @@ const logger = require('../utils/logger');
 const dataStore = require('../utils/dataStore');
 const { broadcastEvent } = require('./websocketService');
 
+function firstNonEmpty(...values) {
+  return values.find(v => v !== undefined && v !== null && `${v}`.toString().trim() !== '') || null;
+}
+
 let monitoringActive = false;
 let monitoringJob = null;
 
@@ -29,9 +33,23 @@ async function checkMessageProcessingLogs() {
 
     // Pick the most recent failure not already ticketed
     const existingTickets = dataStore.getTickets();
-    const newFailure = failed.find(msg =>
-      !existingTickets.some(t => t.sapMessageGuid === msg.MessageGuid)
-    );
+    const newFailure = failed.find(msg => {
+      // Skip if same MessageGuid already ticketed
+      const guidMatch = existingTickets.some(t => t.sapMessageGuid === msg.MessageGuid);
+      if (guidMatch) return false;
+
+      // Skip if same iFlow + Package + error within last 60 minutes
+      const cutoff = Date.now() - 60 * 60 * 1000;
+      const duplicateMatch = existingTickets.some(t =>
+        t.iflow === msg.IntegrationFlowName &&
+        t.packageId === msg.IntegrationArtifact?.PackageId &&
+        t.status !== 'RESOLVED' &&
+        new Date(t.createdAt).getTime() > cutoff
+      );
+      if (duplicateMatch) return false;
+
+      return true;
+    });
 
     if (!newFailure) return null;
 
@@ -39,15 +57,96 @@ async function checkMessageProcessingLogs() {
     const errorInfo = await getMessageErrorInfo(newFailure.MessageGuid);
     const runs = await getMessageRuns(newFailure.MessageGuid);
     const lastRun = runs[runs.length - 1] || {};
-    const protocol = lastRun.TransportProtocol || lastRun.Protocol || lastRun.AdapterType || lastRun.Channel || lastRun.Transport || 'Unknown';
-    const adapterDetails = [lastRun.AdapterName, lastRun.AdapterType, lastRun.Channel, lastRun.Transport].filter(Boolean).join(' | ') || newFailure.Sender || newFailure.Receiver || 'Unknown';
+    const protocol = firstNonEmpty(
+      lastRun.TransportProtocol,
+      lastRun.Protocol,
+      lastRun.AdapterType,
+      lastRun.Channel,
+      lastRun.Transport,
+      lastRun.ProtocolType,
+      lastRun.TransportType
+    ) || 'N/A';
 
-    let packageName = newFailure.IntegrationFlowPackageName || newFailure.PackageName || newFailure.IntegrationFlowPackageId || newFailure.PackageId || null;
-    let packageId = newFailure.IntegrationFlowPackageId || newFailure.PackageId || null;
-    let iflowName = newFailure.IntegrationFlowName || null;
-    let iflowId = newFailure.IntegrationFlowId || newFailure.IntegrationFlowName || null;
+    const sender = firstNonEmpty(
+      newFailure.Sender,
+      newFailure.SenderParty,
+      newFailure.SenderService,
+      newFailure.SenderName,
+      lastRun.Sender,
+      lastRun.SenderParty,
+      lastRun.SenderService,
+      lastRun.SenderName,
+      newFailure.SourceSystem,
+      newFailure.SenderAddress,
+      lastRun.SourceSystem
+    );
 
-    if ((!packageName || !packageId || !iflowId) && newFailure.IntegrationFlowName) {
+    const receiver = firstNonEmpty(
+      newFailure.Receiver,
+      newFailure.ReceiverParty,
+      newFailure.ReceiverService,
+      newFailure.ReceiverName,
+      lastRun.Receiver,
+      lastRun.ReceiverParty,
+      lastRun.ReceiverService,
+      lastRun.ReceiverName,
+      newFailure.TargetSystem,
+      newFailure.ReceiverAddress,
+      lastRun.TargetSystem
+    );
+
+    const adapterDetails = firstNonEmpty(
+      [lastRun.AdapterName, lastRun.AdapterType, lastRun.Channel, lastRun.Transport, lastRun.Protocol].filter(Boolean).join(' | '),
+      lastRun.AdapterName,
+      lastRun.AdapterType,
+      lastRun.Channel,
+      lastRun.Transport,
+      newFailure.AdapterName,
+      newFailure.AdapterType,
+      sender,
+      receiver
+    ) || 'N/A';
+
+    let packageName = firstNonEmpty(
+      newFailure.IntegrationFlowPackageName,
+      newFailure.PackageName,
+      newFailure.IntegrationFlowPackageId,
+      newFailure.PackageId,
+      lastRun.IntegrationFlowPackageName,
+      lastRun.PackageName,
+      lastRun.IntegrationFlowPackageId,
+      lastRun.PackageId
+    );
+    let packageId = firstNonEmpty(
+      newFailure.IntegrationFlowPackageId,
+      newFailure.PackageId,
+      newFailure.PackageUUID,
+      newFailure.PackageId,
+      lastRun.IntegrationFlowPackageId,
+      lastRun.PackageId,
+      lastRun.PackageUUID,
+      lastRun.Id
+    );
+    let iflowName = firstNonEmpty(
+      newFailure.IntegrationFlowName,
+      newFailure.IntegrationFlowId,
+      newFailure.Name,
+      newFailure.ArtifactName,
+      lastRun.IntegrationFlowName,
+      lastRun.Name,
+      lastRun.ArtifactName
+    );
+    let iflowId = firstNonEmpty(
+      newFailure.IntegrationFlowId,
+      newFailure.IntegrationFlowName,
+      newFailure.ArtifactId,
+      newFailure.Id,
+      lastRun.IntegrationFlowId,
+      lastRun.ArtifactId,
+      lastRun.Id
+    );
+
+    if ((!packageName || !packageId || !iflowId) && (newFailure.IntegrationFlowName || newFailure.IntegrationFlowId || newFailure.ArtifactId || newFailure.Id)) {
       try {
         const { getIntegrationFlows } = require('./sapCpiService');
         const integrationFlows = await getIntegrationFlows();
@@ -57,7 +156,11 @@ async function checkMessageProcessingLogs() {
           flow.ArtifactId === newFailure.IntegrationFlowId ||
           flow.Id === newFailure.IntegrationFlowId ||
           flow.Name === newFailure.IntegrationFlowId ||
-          flow.IntegrationFlowId === newFailure.IntegrationFlowId
+          flow.IntegrationFlowId === newFailure.IntegrationFlowId ||
+          flow.Id === newFailure.ArtifactId ||
+          flow.ArtifactId === newFailure.ArtifactId ||
+          flow.Name === newFailure.ArtifactId ||
+          flow.IntegrationFlowName === newFailure.ArtifactId
         );
 
         if (matchedFlow) {
@@ -77,38 +180,38 @@ async function checkMessageProcessingLogs() {
     });
 
     return {
-      errorCode,
-      interface: newFailure.Receiver || newFailure.Sender || 'SAP CPI',
-      iflow: iflowName || 'Unknown iFlow',
-      packageName: packageName || 'Unknown Package',
-      packageId,
-      iflowId,
-      errorId: newFailure.MessageGuid,
-      errorMessage: errorInfo || newFailure.Status || 'Message processing failed',
-      sapMessageGuid: newFailure.MessageGuid,
-      errorTimestamp: newFailure.LogEnd || newFailure.LogStart || new Date().toISOString(),
-      adapterDetails,
-      protocol,
-      payload: {
-        messageGuid: newFailure.MessageGuid,
-        correlationId: newFailure.CorrelationId,
-        sender: newFailure.Sender,
-        receiver: newFailure.Receiver,
-        packageName: packageName || newFailure.IntegrationFlowPackageName || newFailure.PackageName,
-        packageId: packageId || newFailure.IntegrationFlowPackageId || newFailure.PackageId,
-        iflow: iflowName || newFailure.IntegrationFlowName,
-        iflowId,
-        status: newFailure.Status,
-        logStart: newFailure.LogStart,
-        logEnd: newFailure.LogEnd,
-        adapterName: lastRun.AdapterName,
-        adapterType: lastRun.AdapterType,
-        protocol,
-        errorInfo,
-        runs
-      },
-      timestamp: new Date().toISOString()
-    };
+  errorCode,
+  interface: newFailure.IntegrationArtifact?.Name || 'SAP CPI',
+  iflow: newFailure.IntegrationFlowName,
+  iflowId: newFailure.IntegrationArtifact?.Id,
+  packageId: newFailure.IntegrationArtifact?.PackageId,
+  packageName: newFailure.IntegrationArtifact?.PackageName,
+  sender: newFailure.Sender,
+  receiver: newFailure.Receiver,
+  correlationId: newFailure.CorrelationId,
+  transactionId: newFailure.TransactionId,
+  logLevel: newFailure.LogLevel,
+  monitorUrl: newFailure.AlternateWebLink,
+  errorMessage: errorInfo || 'Message processing failed',
+  sapMessageGuid: newFailure.MessageGuid,
+  errorTimestamp: new Date(parseInt(newFailure.LogEnd?.match(/\d+/)?.[0] || Date.now())).toISOString(),
+  payload: {
+    messageGuid: newFailure.MessageGuid,
+    correlationId: newFailure.CorrelationId,
+    transactionId: newFailure.TransactionId,
+    packageId: newFailure.IntegrationArtifact?.PackageId,
+    packageName: newFailure.IntegrationArtifact?.PackageName,
+    iflowId: newFailure.IntegrationArtifact?.Id,
+    sender: newFailure.Sender,
+    receiver: newFailure.Receiver,
+    logStart: new Date(parseInt(newFailure.LogStart?.match(/\d+/)?.[0] || Date.now())).toISOString(),
+    logEnd: new Date(parseInt(newFailure.LogEnd?.match(/\d+/)?.[0] || Date.now())).toISOString(),
+    logLevel: newFailure.LogLevel,
+    adapterName: lastRun?.AdapterName,
+    monitorUrl: newFailure.AlternateWebLink
+  },
+  timestamp: new Date().toISOString()
+};
   } catch (err) {
     logger.error(`[Monitor] SAP CPI message log check failed: ${err.message}`);
     dataStore.addMonitoringLog({

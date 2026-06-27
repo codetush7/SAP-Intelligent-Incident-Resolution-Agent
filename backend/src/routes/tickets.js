@@ -77,6 +77,55 @@ router.patch('/:id', async (req, res) => {
   res.json(ticket);
 });
 
+router.post('/:id/fix', async (req, res) => {
+  try {
+    const ticket = dataStore.getTicketById(req.params.id);
+    if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+
+    const { fixAction } = req.body;
+    let fixResult;
+    let updatedTicket = ticket;
+
+    try {
+      const { fixIntegrationFlow } = require('../services/sapCpiService');
+      const result = await fixIntegrationFlow(ticket.iflowId || ticket.iflow || ticket.packageId || ticket.packageName);
+      fixResult = {
+        applied: true,
+        message: `SAP CPI fix action executed: ${result.action}`
+      };
+      updatedTicket = dataStore.updateTicket(req.params.id, {
+        status: 'IN_PROGRESS',
+        fixApplied: true,
+        fixRequestedAt: new Date().toISOString(),
+        fixResultMessage: fixResult.message,
+        resolutionNotes: `${ticket.resolutionNotes || ''}\n${fixResult.message}`.trim()
+      });
+    } catch (err) {
+      const message = err.message || 'SAP CPI fix failed';
+      if (message.includes('disabled')) {
+        fixResult = {
+          applied: false,
+          message
+        };
+        updatedTicket = dataStore.updateTicket(req.params.id, {
+          fixApplied: false,
+          fixRequestedAt: new Date().toISOString(),
+          fixResultMessage: message
+        });
+      } else {
+        logger.error(`Ticket fix failed: ${err.message}`);
+        return res.status(500).json({ error: message });
+      }
+    }
+
+    broadcastEvent('ticket_updated', { ticket: updatedTicket });
+    res.json({ ticket: updatedTicket, ...fixResult, fixAction });
+  } catch (err) {
+    logger.error('Ticket fix error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete('/:id', (req, res) => {
   const deleted = dataStore.deleteTicket(req.params.id);
   if (!deleted) return res.status(404).json({ error: 'Ticket not found' });

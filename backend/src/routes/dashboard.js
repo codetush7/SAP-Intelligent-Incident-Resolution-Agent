@@ -24,25 +24,27 @@ router.get('/stats', (req, res) => {
         parsedPayload = t.payload;
       }
 
-      const errorId = t.errorId || t.sapMessageGuid || parsedPayload.messageGuid || parsedPayload.MessageGuid || parsedPayload.errorId || parsedPayload.ErrorId || null;
-      const adapterDetails = t.adapterDetails || parsedPayload.adapterDetails || [parsedPayload.AdapterName, parsedPayload.adapterType, parsedPayload.Channel, parsedPayload.Transport, parsedPayload.TransportProtocol].filter(Boolean).join(' | ') || null;
-      const protocol = t.protocol || parsedPayload.protocol || parsedPayload.TransportProtocol || parsedPayload.Transport || parsedPayload.Protocol || null;
-      const packageName = t.packageName || parsedPayload.packageName || parsedPayload.IntegrationFlowPackageName || parsedPayload.PackageName || null;
-      const packageId = t.packageId || parsedPayload.packageId || parsedPayload.IntegrationFlowPackageId || parsedPayload.PackageId || null;
-      const iflowId = t.iflowId || parsedPayload.iflowId || parsedPayload.IntegrationFlowId || parsedPayload.IntegrationFlowId || null;
-      const errorMessage = t.errorMessage || t.description || t.rootCause || t.evidence || parsedPayload.errorInfo || parsedPayload.errorMessage || parsedPayload.Status || (typeof t.payload === 'string' ? t.payload : JSON.stringify(t.payload || {}));
-      const status = t.status || parsedPayload.Status || null;
-      const priority = t.priority || parsedPayload.priority || null;
+      const errorId = t.errorId || t.sapMessageGuid || parsedPayload.messageGuid || parsedPayload.MessageGuid || parsedPayload.errorId || parsedPayload.ErrorId || 'N/A';
+      const adapterDetails = t.adapterDetails || parsedPayload.adapterDetails || [parsedPayload.AdapterName, parsedPayload.adapterType, parsedPayload.Channel, parsedPayload.Transport, parsedPayload.TransportProtocol].filter(Boolean).join(' | ') || 'N/A';
+      const protocol = t.protocol || parsedPayload.protocol || parsedPayload.TransportProtocol || parsedPayload.Transport || parsedPayload.Protocol || 'N/A';
+      const packageName = t.packageName || parsedPayload.packageName || parsedPayload.IntegrationFlowPackageName || parsedPayload.PackageName || 'N/A';
+      const packageId = t.packageId || parsedPayload.packageId || parsedPayload.IntegrationFlowPackageId || parsedPayload.PackageId || parsedPayload.PackageUUID || parsedPayload.Id || 'N/A';
+      const iflowId = t.iflowId || parsedPayload.iflowId || parsedPayload.IntegrationFlowId || parsedPayload.ArtifactId || parsedPayload.Id || 'N/A';
+      const errorMessage = t.errorMessage || t.description || t.rootCause || t.evidence || parsedPayload.errorInfo || parsedPayload.errorMessage || parsedPayload.Status || (typeof t.payload === 'string' ? t.payload : JSON.stringify(t.payload || {})) || 'N/A';
+      const status = t.status || parsedPayload.Status || 'N/A';
+      const priority = t.priority || parsedPayload.priority || 'N/A';
 
       return {
         ticketNumber: t.ticketNumber,
         title: t.title,
-        interface: t.interface || parsedPayload.interface || parsedPayload.receiver || parsedPayload.sender || null,
-        iflow: t.iflow || parsedPayload.iflow || parsedPayload.IntegrationFlowName || parsedPayload.IntegrationFlowName || null,
+        interface: t.interface || parsedPayload.interface || parsedPayload.receiver || parsedPayload.sender || 'N/A',
+        iflow: t.iflow || parsedPayload.iflow || parsedPayload.IntegrationFlowName || 'N/A',
         packageName,
         packageId,
         iflowId,
-        errorCode: t.errorCode,
+        sender: t.sender || parsedPayload.sender || parsedPayload.Sender || 'N/A',
+        receiver: t.receiver || parsedPayload.receiver || parsedPayload.Receiver || 'N/A',
+        errorCode: t.errorCode || 'N/A',
         errorId,
         errorMessage,
         payload: parsedPayload,
@@ -51,8 +53,6 @@ router.get('/stats', (req, res) => {
         timestamp: t.errorTimestamp || t.createdAt || parsedPayload.timestamp || parsedPayload.LogEnd || parsedPayload.LogStart || new Date().toISOString(),
         status,
         priority,
-        sender: parsedPayload.sender || parsedPayload.Sender || null,
-        receiver: parsedPayload.receiver || parsedPayload.Receiver || null,
         correlationId: parsedPayload.correlationId || parsedPayload.CorrelationId || null
       };
     });

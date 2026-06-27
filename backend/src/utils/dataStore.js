@@ -10,6 +10,15 @@ const store = {
   agentLogs: []
 };
 
+function normalizeTicketData(data = {}) {
+  return {
+    ...data,
+    status: data.status ? String(data.status).toUpperCase() : undefined,
+    priority: data.priority ? String(data.priority).toUpperCase() : undefined,
+    category: data.category ? String(data.category).toUpperCase() : undefined
+  };
+}
+
 // Seed with sample data for demonstration
 function seedData() {
   const now = new Date();
@@ -163,7 +172,7 @@ module.exports = {
     const ticket = {
       id: uuidv4(),
       ticketNumber: `CPI-${1000 + store.tickets.length + 1}`,
-      ...data,
+      ...normalizeTicketData(data),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       aiAnalyzed: false
@@ -174,7 +183,7 @@ module.exports = {
   updateTicket: (id, data) => {
     const idx = store.tickets.findIndex(t => t.id === id);
     if (idx === -1) return null;
-    store.tickets[idx] = { ...store.tickets[idx], ...data, updatedAt: new Date().toISOString() };
+    store.tickets[idx] = { ...store.tickets[idx], ...normalizeTicketData(data), updatedAt: new Date().toISOString() };
     return store.tickets[idx];
   },
   deleteTicket: (id) => {
@@ -212,13 +221,13 @@ module.exports = {
     const tickets = store.tickets;
     return {
       total: tickets.length,
-      open: tickets.filter(t => t.status === 'OPEN').length,
-      inProgress: tickets.filter(t => t.status === 'IN_PROGRESS').length,
-      resolved: tickets.filter(t => t.status === 'RESOLVED').length,
-      critical: tickets.filter(t => t.priority === 'CRITICAL').length,
-      high: tickets.filter(t => t.priority === 'HIGH').length,
-      medium: tickets.filter(t => t.priority === 'MEDIUM').length,
-      low: tickets.filter(t => t.priority === 'LOW').length,
+      open: tickets.filter(t => String(t.status || '').toUpperCase() === 'OPEN').length,
+      inProgress: tickets.filter(t => String(t.status || '').toUpperCase() === 'IN_PROGRESS').length,
+      resolved: tickets.filter(t => String(t.status || '').toUpperCase() === 'RESOLVED').length,
+      critical: tickets.filter(t => String(t.priority || '').toUpperCase() === 'CRITICAL').length,
+      high: tickets.filter(t => String(t.priority || '').toUpperCase() === 'HIGH').length,
+      medium: tickets.filter(t => String(t.priority || '').toUpperCase() === 'MEDIUM').length,
+      low: tickets.filter(t => String(t.priority || '').toUpperCase() === 'LOW').length,
       activeAlerts: store.alerts.filter(a => !a.acknowledged).length,
       aiAnalyzed: tickets.filter(t => t.aiAnalyzed).length
     };
