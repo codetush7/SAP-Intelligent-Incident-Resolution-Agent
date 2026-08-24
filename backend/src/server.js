@@ -18,9 +18,12 @@ const analysisRoutes = require('./routes/analysis');
 const dashboardRoutes = require('./routes/dashboard');
 const agentRoutes = require('./routes/agent');
 const webhookRoutes = require('./routes/webhooks');
+const tenantRoutes = require('./routes/tenants');
+const jiraRoutes = require('./routes/jira');
 
 const app = express();
 const server = http.createServer(app);
+const authRoutes = require('./routes/auth');
 
 // WebSocket Server
 const wss = new WebSocket.Server({ server, path: '/ws' });
@@ -57,12 +60,15 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
+app.use('/api/auth', authRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/analysis', analysisRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/agent', agentRoutes);
 app.use('/api/webhooks', webhookRoutes);
+app.use('/api/tenants', tenantRoutes);
+app.use('/api/jira', jiraRoutes);
 
 // 404 Handler
 app.use((req, res) => {

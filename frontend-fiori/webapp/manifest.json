@@ -1,0 +1,84 @@
+{
+  "_version": "1.60.0",
+  "sap.app": {
+    "id": "cpi.incidentagent",
+    "type": "application",
+    "i18n": "i18n/i18n.properties",
+    "applicationVersion": { "version": "1.0.0" },
+    "title": "{{appTitle}}",
+    "description": "{{appDescription}}",
+    "dataSources": {}
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "icons": {
+      "icon": "sap-icon://alert",
+      "favIcon": ""
+    },
+    "deviceTypes": { "desktop": true, "tablet": true, "phone": true },
+    "fullWidth": true
+  },
+  "sap.ui5": {
+    "rootView": {
+      "viewName": "cpi.incidentagent.view.App",
+      "type": "XML",
+      "id": "app"
+    },
+    "dependencies": {
+      "minUI5Version": "1.120.0",
+      "libs": {
+        "sap.ui.core": {},
+        "sap.m": {},
+        "sap.f": {},
+        "sap.tnt": {},
+        "sap.ui.layout": {}
+       
+      }
+    },
+    "contentDensities": { "compact": true, "cozy": false },
+    "models": {
+      "i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "settings": { "bundleName": "cpi.incidentagent.i18n.i18n" }
+      },
+      "app": {
+        "type": "sap.ui.model.json.JSONModel"
+      }
+    },
+    "resources": {
+      "css": [{ "uri": "css/style.css" }]
+    },
+    "routing": {
+      "config": {
+        "routerClass": "sap.m.routing.Router",
+        "viewType": "XML",
+        "viewPath": "cpi.incidentagent.view",
+        "controlId": "app",
+        "controlAggregation": "pages",
+        "transition": "slide",
+        "async": true
+      },
+      "routes": [
+        { "pattern": "", "name": "dashboard", "target": "dashboard" },
+        { "pattern": "dashboard", "name": "dashboardExplicit", "target": "dashboard" },
+        { "pattern": "monitoring", "name": "monitoring", "target": "monitoring" },
+        { "pattern": "incidents", "name": "incidents", "target": "incidents" },
+        { "pattern": "incidents/{ticketId}", "name": "incidentDetail", "target": "incidentDetail" },
+        { "pattern": "analysis/{ticketId}", "name": "analysis", "target": "analysis" },
+        { "pattern": "remediation/{ticketId}", "name": "remediation", "target": "remediation" },
+        { "pattern": "tenants", "name": "tenants", "target": "tenants" },
+        { "pattern": "login", "name": "login", "target": "login" }
+      ],
+      "targets": {
+        "dashboard": { "viewName": "Dashboard", "viewId": "dashboard" },
+        "monitoring": { "viewName": "Monitoring", "viewId": "monitoring" },
+        "incidents": { "viewName": "Incidents", "viewId": "incidents" },
+        "incidentDetail": { "viewName": "IncidentDetail", "viewId": "incidentDetail" },
+        "analysis": { "viewName": "Analysis", "viewId": "analysis" },
+        "remediation": { "viewName": "Remediation", "viewId": "remediation" },
+        "tenants": { "viewName": "Tenants", "viewId": "tenants" },
+        "login": { "viewName": "Login", "viewId": "login" }
+      }
+    }
+  }
+}

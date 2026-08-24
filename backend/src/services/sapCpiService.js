@@ -1,5 +1,6 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
+const requestContext = require('../utils/requestContext');
 
 function formatAxiosError(err) {
   if (err.response) {
@@ -8,40 +9,54 @@ function formatAxiosError(err) {
   return err.message;
 }
 
-// ─── Token Cache ──────────────────────────────────────────────────────────────
-let cachedToken = null;
-let tokenExpiry = null;
+function getActiveCreds() {
+  const ctx = requestContext.getContext();
+  const creds = ctx && ctx.creds;
+  if (!creds) {
+    throw new Error('No SAP CPI tenant is connected for this user. Add and activate a tenant in Tenant Connect.');
+  }
+  return creds;
+}
+// ─── Token Cache (per tenant) ─────────────────────────────────────────────────
+const tokenCache = new Map(); // tenantId -> { token, expiry }
 
 async function getSAPToken() {
-  if (cachedToken && tokenExpiry && Date.now() < tokenExpiry) {
-    return cachedToken;
+  const creds = getActiveCreds();
+  const cached = tokenCache.get(creds.id);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.token;
   }
 
-  logger.info('[SAP CPI] Fetching new OAuth token...');
+  logger.info(`[SAP CPI] Fetching new OAuth token for tenant "${creds.name}"...`);
 
   try {
     const response = await axios.post(
-      process.env.SAP_CPI_TOKEN_URL,
+      creds.tokenUrl,
       'grant_type=client_credentials',
       {
         auth: {
-          username: process.env.SAP_CPI_CLIENT_ID,
-          password: process.env.SAP_CPI_CLIENT_SECRET
+          username: creds.clientId,
+          password: creds.clientSecret
         },
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         timeout: 15000
       }
     );
 
-    cachedToken = response.data.access_token;
-    tokenExpiry = Date.now() + (response.data.expires_in - 60) * 1000;
+    const token = response.data.access_token;
+    const expiry = Date.now() + (response.data.expires_in - 60) * 1000;
+    tokenCache.set(creds.id, { token, expiry });
     logger.info('[SAP CPI] OAuth token obtained successfully');
-    return cachedToken;
+    return token;
   } catch (err) {
     const errorDetail = formatAxiosError(err);
     logger.error(`[SAP CPI] OAuth token request failed: ${errorDetail}`);
     throw new Error(`SAP CPI token request failed: ${errorDetail}`);
   }
+}
+
+function getBaseUrl() {
+  return getActiveCreds().baseUrl;
 }
 
 function sapHeaders(token) {
@@ -55,7 +70,7 @@ function sapHeaders(token) {
 // ─── Message Processing Logs ──────────────────────────────────────────────────
 async function getFailedMessages(top = 20) {
   const token = await getSAPToken();
-  const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/MessageProcessingLogs` +
+  const url = `${getBaseUrl()}/api/v1/MessageProcessingLogs` +
     `?$filter=Status eq 'FAILED'&$top=${top}&$orderby=LogEnd desc&$format=json`;
 
   const response = await axios.get(url, {
@@ -72,7 +87,7 @@ async function getFailedMessages(top = 20) {
 // ─── Message Processing Log Error Info ────────────────────────────────────────
 async function getMessageErrorInfo(messageGuid) {
   const token = await getSAPToken();
-  const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/MessageProcessingLogs('${messageGuid}')/ErrorInformation/$value`;
+  const url = `${getBaseUrl()}/api/v1/MessageProcessingLogs('${messageGuid}')/ErrorInformation/$value`;
 
   try {
     const response = await axios.get(url, {
@@ -88,7 +103,7 @@ async function getMessageErrorInfo(messageGuid) {
 // ─── Message Processing Log Runs (adapter details) ───────────────────────────
 async function getMessageRuns(messageGuid) {
   const token = await getSAPToken();
-  const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/MessageProcessingLogs('${messageGuid}')/MessageProcessingLogRuns?$format=json`;
+  const url = `${getBaseUrl()}/api/v1/MessageProcessingLogs('${messageGuid}')/MessageProcessingLogRuns?$format=json`;
 
   try {
     const response = await axios.get(url, {
@@ -104,7 +119,7 @@ async function getMessageRuns(messageGuid) {
 // ─── Integration Flows (deployed iFlows) ─────────────────────────────────────
 async function getIntegrationFlows() {
   const token = await getSAPToken();
-  const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/IntegrationRuntimeArtifacts?$format=json`;
+  const url = `${getBaseUrl()}/api/v1/IntegrationRuntimeArtifacts?$format=json`;
 
   const response = await axios.get(url, {
     headers: sapHeaders(token),
@@ -117,7 +132,7 @@ async function getIntegrationFlows() {
 // ─── Data Store Entries ───────────────────────────────────────────────────────
 async function getDataStoreEntries() {
   const token = await getSAPToken();
-  const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/DataStores?$format=json`;
+  const url = `${getBaseUrl()}/api/v1/DataStores?$format=json`;
 
   try {
     const response = await axios.get(url, {
@@ -158,7 +173,7 @@ async function fixIntegrationFlow(artifactKey) {
   let lastError = null;
 
   for (const action of candidateActions) {
-    const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/IntegrationRuntimeArtifacts('${artifactId}')/${action}`;
+    const url = `${getBaseUrl()}/api/v1/IntegrationRuntimeArtifacts('${artifactId}')/${action}`;
     try {
       const response = await axios.post(url, null, {
         headers: sapHeaders(token),
@@ -181,7 +196,7 @@ async function fixIntegrationFlow(artifactKey) {
 // ─── JMS Resources ────────────────────────────────────────────────────────────
 async function getJMSResources() {
   const token = await getSAPToken();
-  const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/JMSBrokers?$format=json`;
+  const url = `${getBaseUrl()}/api/v1/JMSBrokers?$format=json`;
 
   try {
     const response = await axios.get(url, {
@@ -198,7 +213,7 @@ async function getJMSResources() {
 // ─── Keystore / Certificates ─────────────────────────────────────────────────
 async function getCertificates() {
   const token = await getSAPToken();
-  const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/KeystoreEntries?$format=json`;
+  const url = `${getBaseUrl()}/api/v1/KeystoreEntries?$format=json`;
 
   const response = await axios.get(url, {
     headers: sapHeaders(token),
@@ -211,7 +226,7 @@ async function getCertificates() {
 // ─── Security Material (OAuth, credentials) ───────────────────────────────────
 async function getSecurityMaterial() {
   const token = await getSAPToken();
-  const url = `${process.env.SAP_CPI_BASE_URL}/api/v1/SecureParameters?$format=json`;
+  const url = `${getBaseUrl()}/api/v1/SecureParameters?$format=json`;
 
   try {
     const response = await axios.get(url, {
@@ -230,7 +245,7 @@ async function healthCheck() {
   try {
     const token = await getSAPToken();
     await axios.get(
-      `${process.env.SAP_CPI_BASE_URL}/api/v1/IntegrationRuntimeArtifacts?$top=1&$format=json`,
+      `${getBaseUrl()}/api/v1/IntegrationRuntimeArtifacts?$top=1&$format=json`,
       { headers: sapHeaders(token), timeout: 10000 }
     );
     return { connected: true, timestamp: new Date().toISOString() };

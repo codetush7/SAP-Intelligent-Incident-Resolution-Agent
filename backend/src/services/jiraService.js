@@ -1,29 +1,28 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
 
-function jiraClient() {
+
+function jiraClient(creds) {
+  if (!creds) {
+    throw new Error('Jira not connected. Add your Jira connection in Tenant Connect.');
+  }
   return axios.create({
-    baseURL: `${process.env.JIRA_BASE_URL}/rest/api/3`,
-    auth: {
-      username: process.env.JIRA_EMAIL,
-      password: process.env.JIRA_API_TOKEN
-    },
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json'
-    },
+    baseURL: `${creds.baseUrl}/rest/api/3`,
+    auth: { username: creds.email, password: creds.apiToken },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     timeout: 20000
   });
 }
+
 
 function mapPriority(priority) {
   const map = { CRITICAL: 'Highest', HIGH: 'High', MEDIUM: 'Medium', LOW: 'Low' };
   return map[priority] || 'Medium';
 }
 
-async function createJiraIssue(ticketData) {
-  if (!process.env.JIRA_BASE_URL || !process.env.JIRA_API_TOKEN) {
-    throw new Error('Jira not configured in .env');
+async function createJiraIssue(creds,ticketData) {
+  if (!creds) {
+    throw new Error('Jira not connected. Add your Jira connection in Tenant Connect.');
   }
 
   logger.info(`[Jira] Creating issue for: ${ticketData.ticketNumber}`);
@@ -51,7 +50,7 @@ async function createJiraIssue(ticketData) {
 
   const body = {
     fields: {
-      project: { key: process.env.JIRA_PROJECT_KEY || 'CPI' },
+      project: { key: creds.projectKey },
       summary: ticketData.title,
       description: {
         type: 'doc',
@@ -67,7 +66,7 @@ async function createJiraIssue(ticketData) {
     }
   };
 
-  const client = jiraClient();
+  const client = jiraClient(creds);
   // logger.info(`[Jira Debug] Payload: ${JSON.stringify(body, null, 2)}`);
   let response;
 try {
@@ -83,13 +82,13 @@ try {
   return {
     externalId: response.data.id,
     externalNumber: response.data.key,
-    externalUrl: `${process.env.JIRA_BASE_URL}/browse/${response.data.key}`,
+    externalUrl: `${creds.baseUrl}/browse/${response.data.key}`,
     platform: 'Jira'
   };
 }
 
-async function updateJiraIssue(issueKey, updates) {
-  if (!process.env.JIRA_BASE_URL) return null;
+async function updateJiraIssue(creds, issueKey, updates) {
+  if (!jiraStore.isConfigured()) return null;
 
   const transitionMap = {
     'IN_PROGRESS': 'In Progress',
@@ -98,7 +97,7 @@ async function updateJiraIssue(issueKey, updates) {
   };
 
   try {
-    const client = jiraClient();
+    const client = jiraClient(creds);
 
     // Add comment if notes provided
     if (updates.notes) {
@@ -131,11 +130,11 @@ async function updateJiraIssue(issueKey, updates) {
   }
 }
 
-async function healthCheck() {
+async function healthCheck(creds) {
   try {
-    const client = jiraClient();
+    const client = jiraClient(creds);
     const res = await client.get('/myself');
-    return { connected: true, user: res.data.displayName, instance: process.env.JIRA_BASE_URL };
+    return { connected: true, user: res.data.displayName, instance: creds.baseUrl };
   } catch (err) {
     return { connected: false, error: err.message };
   }

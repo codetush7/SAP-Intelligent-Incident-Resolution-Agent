@@ -1,14 +1,36 @@
+const url = require('url');
+const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
+const userStore = require('../utils/userStore');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-jwt-secret-change-me';
 
 let wss = null;
-const clients = new Set();
+const clients = new Map(); // ws -> userId
 
 function setupWebSocket(websocketServer) {
   wss = websocketServer;
 
   wss.on('connection', (ws, req) => {
-    clients.add(ws);
-    logger.info(`[WS] Client connected. Total: ${clients.size}`);
+    let userId = null;
+    try {
+      const { query } = url.parse(req.url, true);
+      if (query.token) {
+        const payload = jwt.verify(query.token, JWT_SECRET);
+        const user = userStore.findById(payload.sub);
+        if (user) userId = user.id;
+      }
+    } catch (err) {
+      logger.warn(`[WS] Token verification failed: ${err.message}`);
+    }
+
+    if (!userId) {
+      ws.close(4001, 'Unauthorized');
+      return;
+    }
+
+    clients.set(ws, userId);
+    logger.info(`[WS] Client connected for user ${userId}. Total: ${clients.size}`);
 
     ws.send(JSON.stringify({
       type: 'connected',
@@ -19,7 +41,6 @@ function setupWebSocket(websocketServer) {
     ws.on('message', (data) => {
       try {
         const msg = JSON.parse(data.toString());
-        logger.debug(`[WS] Received: ${msg.type}`);
         handleClientMessage(ws, msg);
       } catch (err) {
         logger.error(`[WS] Parse error: ${err.message}`);
@@ -43,21 +64,23 @@ function handleClientMessage(ws, msg) {
     case 'ping':
       ws.send(JSON.stringify({ type: 'pong', timestamp: new Date().toISOString() }));
       break;
-    case 'subscribe':
-      ws.send(JSON.stringify({ type: 'subscribed', channel: msg.channel }));
-      break;
     default:
       logger.debug(`[WS] Unknown message type: ${msg.type}`);
   }
 }
 
-function broadcastEvent(eventType, data) {
+// Every event is now user-scoped — sends only to that user's connected sockets.
+function broadcastEvent(eventType, data, userId) {
   if (!wss) return;
+  if (!userId) {
+    logger.warn(`[WS] broadcastEvent('${eventType}') called without a userId — dropped.`);
+    return;
+  }
   const payload = JSON.stringify({ type: eventType, data, timestamp: new Date().toISOString() });
-  
+
   let sent = 0;
-  clients.forEach(client => {
-    if (client.readyState === 1) { // OPEN
+  clients.forEach((clientUserId, client) => {
+    if (clientUserId === userId && client.readyState === 1) {
       try {
         client.send(payload);
         sent++;
@@ -68,9 +91,7 @@ function broadcastEvent(eventType, data) {
     }
   });
 
-  if (sent > 0) {
-    logger.debug(`[WS] Broadcast '${eventType}' to ${sent} clients`);
-  }
+  if (sent > 0) logger.debug(`[WS] Broadcast '${eventType}' to ${sent} client(s) for user ${userId}`);
 }
 
 function getClientCount() {

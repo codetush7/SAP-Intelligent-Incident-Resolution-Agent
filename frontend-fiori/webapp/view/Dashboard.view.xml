@@ -1,0 +1,117 @@
+<mvc:View
+  controllerName="cpi.incidentagent.controller.Dashboard"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.f"
+  xmlns:m="sap.m"
+  xmlns:core="sap.ui.core">
+  <DynamicPage id="dashboardPage" headerExpanded="true">
+    <title>
+      <DynamicPageTitle>
+        <heading>
+          <m:Title text="{i18n>overviewTitle}" level="H2"/>
+        </heading>
+        <actions>
+          <m:Button text="{i18n>refresh}" icon="sap-icon://refresh" press=".onRefresh"/>
+        </actions>
+      </DynamicPageTitle>
+    </title>
+    <content>
+      <m:VBox>
+
+        <!-- Loading state -->
+        <m:HBox justifyContent="Center" class="sapUiLargeMargin" visible="{app>/busy}">
+          <m:BusyIndicator size="2rem"/>
+        </m:HBox>
+
+        <!-- Error state -->
+        <m:MessageStrip
+          type="Error"
+          showIcon="true"
+          class="sapUiSmallMarginBottom"
+          text="{dashboard>/errorMessage}"
+          visible="{= !!${dashboard>/errorMessage} }"/>
+
+        <!-- KPI cards -->
+        <l:Grid
+          xmlns:l="sap.ui.layout"
+          defaultSpan="L3 M6 S12"
+          class="sapUiSmallMarginBottom">
+
+          <GenericTile header="{i18n>kpiTotalIncidents}" subheader="{i18n>kpiAllTime}" press=".onKpiPress" class="sapUiTinyMarginEnd sapUiTinyMarginBottom">
+            <TileContent>
+              <m:NumericContent value="{dashboard>/totalIncidents}" icon="sap-icon://alert"/>
+            </TileContent>
+          </GenericTile>
+
+          <GenericTile header="{i18n>kpiCritical}" subheader="{i18n>kpiNeedsAttention}" class="sapUiTinyMarginEnd sapUiTinyMarginBottom">
+            <TileContent>
+              <m:NumericContent value="{dashboard>/criticalIncidents}" valueColor="Error" icon="sap-icon://message-error"/>
+            </TileContent>
+          </GenericTile>
+
+          <GenericTile header="{i18n>kpiFailedIntegrations}" subheader="{i18n>kpiRuntime}" class="sapUiTinyMarginEnd sapUiTinyMarginBottom">
+            <TileContent>
+              <m:NumericContent value="{dashboard>/failedIntegrations}" valueColor="Critical" icon="sap-icon://error"/>
+            </TileContent>
+          </GenericTile>
+
+          <GenericTile header="{i18n>kpiResolved}" subheader="{i18n>kpiAllTime}" class="sapUiTinyMarginEnd sapUiTinyMarginBottom">
+            <TileContent>
+              <m:NumericContent value="{dashboard>/resolvedIncidents}" valueColor="Good" icon="sap-icon://accept"/>
+            </TileContent>
+          </GenericTile>
+
+          <GenericTile header="{i18n>kpiMttr}" subheader="{i18n>kpiMinutes}" class="sapUiTinyMarginEnd sapUiTinyMarginBottom">
+            <TileContent>
+              <m:NumericContent value="{dashboard>/mttr}" icon="sap-icon://history"/>
+            </TileContent>
+          </GenericTile>
+
+          <GenericTile header="{i18n>kpiMttd}" subheader="{i18n>kpiMinutes}" class="sapUiTinyMarginEnd sapUiTinyMarginBottom">
+            <TileContent>
+              <m:NumericContent value="{dashboard>/mttd}" icon="sap-icon://detective"/>
+            </TileContent>
+          </GenericTile>
+
+          <GenericTile header="{i18n>kpiActiveRemediation}" subheader="{i18n>kpiInProgress}" class="sapUiTinyMarginEnd sapUiTinyMarginBottom">
+            <TileContent>
+              <m:NumericContent value="{dashboard>/activeRemediation}" valueColor="Critical" icon="sap-icon://wrench"/>
+            </TileContent>
+          </GenericTile>
+
+          <GenericTile header="{i18n>kpiAiDetected}" subheader="{i18n>kpiByAgent}" class="sapUiTinyMarginEnd sapUiTinyMarginBottom">
+            <TileContent>
+              <m:NumericContent value="{dashboard>/aiDetectedIssues}" icon="sap-icon://ai"/>
+            </TileContent>
+          </GenericTile>
+        </l:Grid>
+
+        <!-- Recent incidents -->
+        <m:Table
+          id="recentIncidentsTable"
+          headerText="{i18n>recentIncidents}"
+          items="{dashboard>/recentIssues}"
+          noDataText="{i18n>noRecentIncidents}">
+          <m:columns>
+            <m:Column><m:Text text="{i18n>colTicket}"/></m:Column>
+            <m:Column><m:Text text="{i18n>colIntegration}"/></m:Column>
+            <m:Column><m:Text text="{i18n>colStatus}"/></m:Column>
+            <m:Column><m:Text text="{i18n>colPriority}"/></m:Column>
+            <m:Column><m:Text text="{i18n>colTime}"/></m:Column>
+          </m:columns>
+          <m:items>
+            <m:ColumnListItem type="Navigation" press=".onIncidentPress">
+              <m:cells>
+                <m:ObjectIdentifier title="{dashboard>ticketNumber}" text="{dashboard>title}"/>
+                <m:Text text="{dashboard>iflow}"/>
+                <m:ObjectStatus text="{dashboard>status}" state="{path: 'dashboard>status', formatter: '.formatStatusState'}"/>
+                <m:ObjectStatus text="{dashboard>priority}" state="{path: 'dashboard>priority', formatter: '.formatPriorityState'}"/>
+                <m:Text text="{path: 'dashboard>timestamp', formatter: '.formatTimestamp'}"/>
+              </m:cells>
+            </m:ColumnListItem>
+          </m:items>
+        </m:Table>
+      </m:VBox>
+    </content>
+  </DynamicPage>
+</mvc:View>

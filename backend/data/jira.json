@@ -1,0 +1,13 @@
+{
+  "configs": {
+    "939635f0-b1a4-4329-9664-1c782b67fee1": {
+      "baseUrl": "https://maharanatushar19.atlassian.net",
+      "email": "maharana.tushar19@gmail.com",
+      "apiTokenEnc": "ec34310cfa49ff0b9101bbf70dfc9278:b550c7af85b7df2310cd6ae599a16fb7ec9ecf0cd27065a2faeb1485ff7098ecd13013b76a79cd6a1b13ea5b410d85c4fe1a38c2f7ae6f1a87e42449ecddca5330a4429a2f73eec19b8f9b12e0a60f2ccb66ac623b0028e18c28e716f49e835f1d488a0799c4c5a45e91ccef2687d5a78d8e29ad90040a6d3a403381ae1cc659107c6109ad4f943ab7d059ee4d6943d14eccbcb217d4396343c431973ca10fb710eb2badfff2e773dba55b37ac33d4d4dba8253dd72c763310d1b13a306fde04cf28b5e232bc3f19a99500bdc091bcbc",
+      "projectKey": "CPI",
+      "status": "CONNECTED",
+      "lastTestedAt": "2026-08-24T06:20:40.606Z",
+      "lastError": null
+    }
+  }
+}
