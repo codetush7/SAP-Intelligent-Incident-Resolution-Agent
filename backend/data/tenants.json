@@ -14,9 +14,25 @@
       "lastError": null,
       "createdAt": "2026-08-21T08:51:54.747Z",
       "updatedAt": "2026-08-21T08:51:54.747Z"
+    },
+    {
+      "id": "f2650e2c-479f-4033-92f9-bb4f8812aa0a",
+      "userId": "0df17ec0-7a19-48f8-9b10-afb78379b746",
+      "name": "Test",
+      "environment": "DEV",
+      "baseUrl": "https://a7151af7trial.it-cpitrial05.cfapps.us10-001.hana.ondemand.com",
+      "tokenUrl": "https://a7151af7trial.authentication.us10.hana.ondemand.com/oauth/token",
+      "clientId": "sb-19aab132-b319-4c2f-af1e-c3fe0b817e38!b698179|it!b26655",
+      "clientSecretEnc": "e4b0dac666bae75de1db4eba0ca84564:3ea55022c61fdc9370d4fc24f59a8da0889681de1d2d2cc50187fd8ceeb71affc7cb14dd2429a9031cfd81f76c190b93978b05de826f82d04ff4b5870d51a5a5e2e9bc40a8114f7069fb14f8fe25694a4923853527a082ab8cdc7d7cb35e3f43",
+      "status": "CONNECTED",
+      "lastTestedAt": "2026-08-24T12:27:31.457Z",
+      "lastError": null,
+      "createdAt": "2026-08-24T12:27:28.451Z",
+      "updatedAt": "2026-08-24T12:27:28.451Z"
     }
   ],
   "activeTenantIdByUser": {
-    "939635f0-b1a4-4329-9664-1c782b67fee1": "f6d7c796-4ee9-4428-ac73-37fde2acea7d"
+    "939635f0-b1a4-4329-9664-1c782b67fee1": "f6d7c796-4ee9-4428-ac73-37fde2acea7d",
+    "0df17ec0-7a19-48f8-9b10-afb78379b746": "f2650e2c-479f-4033-92f9-bb4f8812aa0a"
   }
 }
