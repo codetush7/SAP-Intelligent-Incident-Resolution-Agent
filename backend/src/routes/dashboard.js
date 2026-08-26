@@ -1,16 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const dataStore = require('../utils/dataStore');
-const { getMonitoringStatus, getClientCount } = require('../services/monitoringService');
+const { getMonitoringStatus } = require('../services/monitoringService');
 const { getClientCount: wsClientCount } = require('../services/websocketService');
+const { requireAuth } = require('../middleware/authMiddleware');
+
+router.use(requireAuth);
 
 // GET /api/dashboard/stats
 router.get('/stats', (req, res) => {
-  const stats = dataStore.getStats();
-  const monitoring = getMonitoringStatus();
-  const activeAlerts = dataStore.getAlerts().filter(a => !a.acknowledged).length;
+  const userId = req.user.id;
 
-  const recentIssues = dataStore.getTickets()
+  const stats = dataStore.getStats(userId);
+  const monitoring = getMonitoringStatus(userId);
+  const activeAlerts = dataStore.getAlerts(userId).filter(a => !a.acknowledged).length;
+
+  const recentIssues = dataStore.getTickets(userId)
     .filter(t => !!t.errorCode && t.iflow && !t.iflow.includes('MessageProcessingLogs Access'))
     .slice(0, 5)
     .map(t => {
@@ -66,8 +71,8 @@ router.get('/stats', (req, res) => {
       alerts: activeAlerts,
       activeAlerts
     },
-    categories: getCategoryBreakdown(),
-    recentActivity: dataStore.getMonitoringLogs().slice(0, 5),
+    categories: getCategoryBreakdown(userId),
+    recentActivity: dataStore.getMonitoringLogs(userId).slice(0, 5),
     recentIssues,
     timestamp: new Date().toISOString()
   });
@@ -75,16 +80,16 @@ router.get('/stats', (req, res) => {
 
 // GET /api/dashboard/trends
 router.get('/trends', (req, res) => {
-  const tickets = dataStore.getTickets();
+  const tickets = dataStore.getTickets(req.user.id);
   const now = new Date();
-  
+
   // Generate trend data for last 7 days
   const trends = [];
   for (let i = 6; i >= 0; i--) {
     const day = new Date(now);
     day.setDate(day.getDate() - i);
     const dayStr = day.toISOString().split('T')[0];
-    
+
     const dayTickets = tickets.filter(t => t.createdAt.startsWith(dayStr));
     trends.push({
       date: dayStr,
@@ -98,8 +103,8 @@ router.get('/trends', (req, res) => {
   res.json(trends);
 });
 
-function getCategoryBreakdown() {
-  const tickets = dataStore.getTickets();
+function getCategoryBreakdown(userId) {
+  const tickets = dataStore.getTickets(userId);
   const categories = {};
   tickets.forEach(t => {
     const name = (t.category || 'GENERAL').toUpperCase();

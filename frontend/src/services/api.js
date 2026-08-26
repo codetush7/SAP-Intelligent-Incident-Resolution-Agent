@@ -16,6 +16,13 @@ api.interceptors.response.use(
   }
 );
 
+<<<<<<< Updated upstream
+=======
+export const investigationAPI = {
+  investigate: (ticketId) => api.get(`/investigation/${ticketId}`)
+};
+
+>>>>>>> Stashed changes
 export const dashboardAPI = {
   getStats: () => api.get('/dashboard/stats'),
   getTrends: () => api.get('/dashboard/trends')

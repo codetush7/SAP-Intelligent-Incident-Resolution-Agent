@@ -22,6 +22,9 @@ const webhookRoutes = require('./routes/webhooks');
 const app = express();
 const server = http.createServer(app);
 
+const investigationRoutes = require('./routes/investigation');
+
+
 // WebSocket Server
 const wss = new WebSocket.Server({ server, path: '/ws' });
 setupWebSocket(wss);
@@ -57,6 +60,11 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
+<<<<<<< Updated upstream
+=======
+app.use('/api/auth', authRoutes);
+app.use('/api/investigation', investigationRoutes);
+>>>>>>> Stashed changes
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/analysis', analysisRoutes);

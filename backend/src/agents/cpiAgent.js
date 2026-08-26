@@ -4,7 +4,7 @@ const logger = require('../utils/logger');
 const dataStore = require('../utils/dataStore');
 const { broadcastEvent } = require('../services/websocketService');
 const { normalizeFingerprint, createIssueFingerprint, createMessageFingerprint } = require('../utils/fingerprint');
-const Groq = require('groq-sdk');
+const aiService = require('../services/ai/aiService');
 
 // ─── AI Provider Configuration ─────────────────────────────────────────────────
 const AI_API_KEY = process.env.GROQ_API_KEY || process.env.AI_API_KEY || process.env.XAI_API_KEY;
@@ -14,39 +14,8 @@ if (!AI_API_KEY) {
   console.warn('[AI Agent] WARNING: GROQ_API_KEY is not set in .env');
 }
 
-const groqClient = new Groq({
-  apiKey: AI_API_KEY
-});
 
-function formatApiError(err) {
-  if (err.response) {
-    return `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}`;
-  }
-  return err.message;
-}
 
-async function callGrok(messages, systemPrompt) {
-  if (!AI_API_KEY) {
-    throw new Error('GROQ_API_KEY is not configured. Please set it in backend/.env and restart the server.');
-  }
-
-  try {
-    const response = await groqClient.chat.completions.create({
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...messages
-      ],
-      model: AI_MODEL,
-      temperature: 0.2
-    });
-
-    return response?.choices?.[0]?.message?.content || '';
-  } catch (err) {
-    const errorDetail = formatApiError(err);
-    logger.error(`[AI Agent] AI request failed: ${errorDetail}`);
-    throw new Error(`AI API request failed: ${errorDetail}`);
-  }
-}
 
 const PRIORITY_RULES = {
   'QUEUE_THRESHOLD_EXCEEDED': (d) => d.queueSize > 5000 ? 'CRITICAL' : d.queueSize > 1000 ? 'HIGH' : 'MEDIUM',
@@ -99,7 +68,7 @@ function normalizeErrorCode(errorCode) {
 
 // ─── AI Root Cause Analysis ───────────────────────────────────────────────────
 async function analyzeIncidentWithAI(incidentData) {
-  logger.info(`[AI Agent] Grok analyzing: ${incidentData.errorCode}`);
+  logger.info(`[AI Agent] AI analyzing: ${incidentData.errorCode}`);
 
   const systemPrompt = `You are an expert SAP Cloud Platform Integration (CPI) support engineer.
 Analyze integration failures and respond ONLY with a valid JSON object.
@@ -124,29 +93,21 @@ SAP Message ID : ${incidentData.sapMessageGuid || 'N/A'}
 Payload        : ${JSON.stringify(incidentData.payload || {})}
 Timestamp      : ${incidentData.timestamp || new Date().toISOString()}`;
 
-  try {
-    const text = await callGrok(
-      [{ role: 'user', content: userMessage }],
-      systemPrompt
-    );
-
-    let clean = text.trim().replace(/```json|```/g, '').trim();
-    const jsonMatch = clean.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('No JSON in Grok response');
-    const analysis = JSON.parse(jsonMatch[0]);
-    logger.info(`[AI Agent] Grok analysis complete for ${incidentData.errorCode}`);
-    return analysis;
-  } catch (err) {
-    logger.error(`[AI Agent] Grok analysis failed: ${err.message}`);
-    return {
-      rootCause: `${incidentData.errorCode} detected in ${incidentData.interface || 'unknown interface'}`,
-      evidence: incidentData.errorMessage || 'See error code',
-      impact: 'Integration flow disrupted — business transactions may be affected',
-      recommendation: '1. Check SAP CPI message processing logs\n2. Verify system connectivity\n3. Review iFlow configuration',
-      suggestedTitle: `${incidentData.errorCode} - ${incidentData.iflow || incidentData.interface || 'CPI'} Failure`,
-      additionalContext: 'AI analysis unavailable or failed. Manual review required.'
-    };
-  }
+ try {
+  const analysis = await aiService.generateStructuredJSON(systemPrompt, userMessage);
+  logger.info(`[AI Agent] Analysis complete for ${incidentData.errorCode} (provider: ${aiService.getProviderInfo().provider})`);
+  return analysis;
+} catch (err) {
+  logger.error(`[AI Agent] AI analysis failed: ${err.message}`);
+  return {
+    rootCause: `${incidentData.errorCode} detected in ${incidentData.interface || 'unknown interface'}`,
+    evidence: incidentData.errorMessage || 'See error code',
+    impact: 'Integration flow disrupted — business transactions may be affected',
+    recommendation: '1. Check SAP CPI message processing logs\n2. Verify system connectivity\n3. Review iFlow configuration',
+    suggestedTitle: `${incidentData.errorCode} - ${incidentData.iflow || incidentData.interface || 'CPI'} Failure`,
+    additionalContext: 'AI analysis unavailable or failed. Manual review required.'
+  };
+}
 }
 
 // ─── Process Incident (Full Agent Flow) ──────────────────────────────────────
@@ -154,12 +115,12 @@ async function processIncident(incidentData) {
   logger.info(`[AI Agent] Processing incident: ${incidentData.errorCode}`);
 
   broadcastEvent('agent_activity', {
-    message: `🔍 Grok AI analyzing: ${incidentData.errorCode} in ${incidentData.iflow || incidentData.interface}`,
+    message: `🔍 AI analyzing: ${incidentData.errorCode} in ${incidentData.iflow || incidentData.interface}`,
     type: 'ANALYZING',
     timestamp: new Date().toISOString()
   });
 
-  // Step 1 — Grok AI Root Cause Analysis
+  // Step 1 —  AI Root Cause Analysis
   const analysis = await analyzeIncidentWithAI(incidentData);
 
   // Step 2 — AI Classification (P1/P2/P3/P4)
@@ -370,11 +331,11 @@ Be technical, precise, and actionable. Use numbered steps for recommendations.`;
   if (sanitized.length === 0) throw new Error('No valid user message found');
 
   try {
-    const response = await callGrok(sanitized, systemPrompt);
+    const response = await aiService.chat(sanitized, systemPrompt);
     return response;
   } catch (err) {
-    logger.error(`[AI Agent] Grok chat failed: ${err.message}`);
-    return `I was unable to reach the SAP CPI AI service right now. Please try again later or check the backend XAI API key and permissions.`;
+    logger.error(`[AI Agent] AI chat failed: ${err.message}`);
+    return `I was unable to reach the SAP CPI AI service right now. Please try again later or check the AI provider configuration.`;
   }
 }
 
