@@ -25,6 +25,9 @@ const app = express();
 const server = http.createServer(app);
 const authRoutes = require('./routes/auth');
 
+const investigationRoutes = require('./routes/investigation');
+
+
 // WebSocket Server
 const wss = new WebSocket.Server({ server, path: '/ws' });
 setupWebSocket(wss);
@@ -61,6 +64,7 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/investigation', investigationRoutes);
 app.use('/api/monitoring', monitoringRoutes);
 app.use('/api/tickets', ticketRoutes);
 app.use('/api/analysis', analysisRoutes);
