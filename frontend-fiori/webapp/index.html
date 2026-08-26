@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAP CPI Intelligent Incident &amp; Resolution Agent</title>
+
+  <!-- Configure the backend base URL here (mirrors REACT_APP_API_URL) -->
+  <script>
+    window.__CPI_API_URL__ = "http://localhost:5000";
+  </script>
+
+  <script
+    id="sap-ui-bootstrap"
+    src="https://sdk.openui5.org/resources/sap-ui-core.js"
+    data-sap-ui-theme="sap_horizon"
+    data-sap-ui-resourceroots='{"cpi.incidentagent": "./"}'
+    data-sap-ui-compatVersion="edge"
+    data-sap-ui-async="true"
+    data-sap-ui-frameOptions="trusted"
+    data-sap-ui-onInit="module:cpi/incidentagent/bootstrap">
+  </script>
+</head>
+<body class="sapUiBody" id="content">
+</body>
+</html>

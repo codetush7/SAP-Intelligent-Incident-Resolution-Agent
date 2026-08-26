@@ -6,6 +6,7 @@ const { broadcastEvent } = require('../services/websocketService');
 const { normalizeFingerprint, createIssueFingerprint, createMessageFingerprint } = require('../utils/fingerprint');
 const aiService = require('../services/ai/aiService');
 
+
 // ─── AI Provider Configuration ─────────────────────────────────────────────────
 const AI_API_KEY = process.env.GROQ_API_KEY || process.env.AI_API_KEY || process.env.XAI_API_KEY;
 const AI_MODEL = process.env.GROQ_MODEL || process.env.AI_MODEL || process.env.XAI_MODEL || 'llama-3.1-8b-instant';
@@ -111,14 +112,14 @@ Timestamp      : ${incidentData.timestamp || new Date().toISOString()}`;
 }
 
 // ─── Process Incident (Full Agent Flow) ──────────────────────────────────────
-async function processIncident(incidentData) {
+async function processIncident(incidentData, userId) {
   logger.info(`[AI Agent] Processing incident: ${incidentData.errorCode}`);
 
   broadcastEvent('agent_activity', {
     message: `🔍 AI analyzing: ${incidentData.errorCode} in ${incidentData.iflow || incidentData.interface}`,
     type: 'ANALYZING',
     timestamp: new Date().toISOString()
-  });
+  }, userId);
 
   // Step 1 —  AI Root Cause Analysis
   const analysis = await analyzeIncidentWithAI(incidentData);
@@ -142,7 +143,7 @@ async function processIncident(incidentData) {
   // P4 LOW — just log, no ticket, no Jira, no email
   if (!classification.createJira) {
     logger.info(`[AI Agent] P4/LOW issue detected — logging only, no ticket created`);
-    dataStore.addMonitoringLog({
+    dataStore.addMonitoringLog(userId, {
       type: 'INFO',
       message: `P4 issue detected in ${incidentData.iflow || incidentData.interface} — logged only`,
       status: 'OK'
@@ -162,7 +163,7 @@ async function processIncident(incidentData) {
   })
 );
 
-const existingTicket = dataStore.getTickets().find(t => {
+const existingTicket = dataStore.getTickets(userId).find(t => {
   const ticketIssueFingerprint = t.issueFingerprint
     ? normalizeFingerprint(t.issueFingerprint)
     : normalizeFingerprint(createIssueFingerprint({
@@ -183,12 +184,12 @@ const existingTicket = dataStore.getTickets().find(t => {
       issue: incidentData,
       message: `Duplicate issue detected for ${incidentData.iflow || incidentData.interface}. No new ticket created.`,
       timestamp: new Date().toISOString()
-    });
+    }, userId);
     return existingTicket;
   }
 
   // Step 5 — Create internal ticket
-  const ticket = dataStore.createTicket({
+  const ticket = dataStore.createTicket(userId,{
     title: analysis.suggestedTitle || `${incidentData.errorCode} - ${incidentData.interface}`,
     description: `${analysis.rootCause}\n\nEvidence: ${analysis.evidence}\n\nImpact: ${analysis.impact}`,
     priority,
@@ -238,14 +239,13 @@ const existingTicket = dataStore.getTickets().find(t => {
 
   // Step 6 — Auto-create Jira ticket if configured
   let jiraResult = null;
-  // logger.info(`[Jira Debug] JIRA_BASE_URL=${process.env.JIRA_BASE_URL}, TOKEN_SET=${!!process.env.JIRA_API_TOKEN}`);
-  if (process.env.JIRA_BASE_URL &&
-    process.env.JIRA_API_TOKEN &&
-    process.env.JIRA_BASE_URL !== 'https://your-org.atlassian.net') {
+  const jiraStore = require('../utils/jiraStore');
+  if (jiraStore.isConfigured(userId)) {
     try {
       const { createJiraIssue } = require('../services/jiraService');
-      jiraResult = await createJiraIssue(ticket);
-      dataStore.updateTicket(ticket.id, {
+      const creds = jiraStore.getCredentials(userId);
+      jiraResult = await createJiraIssue(ticket, creds);
+      dataStore.updateTicket(ticket.id, userId, {
         jiraId: jiraResult.externalId,
         jiraKey: jiraResult.externalNumber,
         jiraUrl: jiraResult.externalUrl
@@ -257,7 +257,7 @@ const existingTicket = dataStore.getTickets().find(t => {
         jiraUrl: jiraResult.externalUrl,
         message: `🎫 Jira ${jiraResult.externalNumber} created`,
         timestamp: new Date().toISOString()
-      });
+      }, userId);
     } catch (jiraErr) {
       logger.error(`[AI Agent] Jira creation failed: ${jiraErr.message}`);
     }
@@ -265,7 +265,7 @@ const existingTicket = dataStore.getTickets().find(t => {
 
   if (classification.sendEmail) {
     try {
-      const updatedTicket = dataStore.getTicketById(ticket.id);
+      const updatedTicket = dataStore.getTicketById(ticket.id, userId);
       await sendAlertEmail(updatedTicket, jiraResult?.externalNumber);
     } catch (emailErr) {
       logger.error(`[Email] Alert send failed: ${emailErr.message}`);
@@ -273,7 +273,7 @@ const existingTicket = dataStore.getTickets().find(t => {
   }
 
   // Step 7 — Log and broadcast
-  dataStore.addAgentLog({
+  dataStore.addAgentLog(userId,{
     action: 'TICKET_CREATED',
     ticketId: ticket.id,
     ticketNumber: ticket.ticketNumber,
@@ -284,7 +284,7 @@ const existingTicket = dataStore.getTickets().find(t => {
     message: `Ticket ${ticket.ticketNumber} created${jiraResult ? ` → Jira ${jiraResult.externalNumber}` : ''}`
   });
 
-  dataStore.addMonitoringLog({
+  dataStore.addMonitoringLog(userId, {
     type: 'TICKET',
     message: `Grok AI created ${ticket.ticketNumber}${jiraResult ? ` (Jira: ${jiraResult.externalNumber})` : ''} for ${incidentData.errorCode}`,
     status: 'TICKET_CREATED'
@@ -296,13 +296,13 @@ const existingTicket = dataStore.getTickets().find(t => {
     jiraResult,
     message: `✅ ${ticket.ticketNumber} created${jiraResult ? ` + Jira ${jiraResult.externalNumber}` : ''}`,
     timestamp: new Date().toISOString()
-  });
+  }, userId);
 
   broadcastEvent('agent_activity', {
     message: `✅ ${ticket.ticketNumber} → ${team}${jiraResult ? ` → Jira ${jiraResult.externalNumber}` : ''}`,
     type: 'COMPLETED',
     timestamp: new Date().toISOString()
-  });
+  }, userId);
 
   return { ticket: dataStore.getTicketById(ticket.id), analysis, jiraResult };
 }

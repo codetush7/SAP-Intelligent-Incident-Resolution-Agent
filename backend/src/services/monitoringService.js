@@ -4,6 +4,9 @@ const logger = require('../utils/logger');
 const dataStore = require('../utils/dataStore');
 const { broadcastEvent } = require('./websocketService');
 const { normalizeFingerprint, createIssueFingerprint, createMessageFingerprint } = require('../utils/fingerprint');
+const tenantStore = require('../utils/tenantStore');
+const userStore = require('../utils/userStore');
+const requestContext = require('../utils/requestContext');
 
 function firstNonEmpty(...values) {
   return values.find(v => v !== undefined && v !== null && `${v}`.toString().trim() !== '') || null;
@@ -12,20 +15,14 @@ function firstNonEmpty(...values) {
 let monitoringActive = false;
 let monitoringJob = null;
 
-// Check if SAP CPI is configured
-function isSAPConfigured() {
-  return !!(
-    process.env.SAP_CPI_BASE_URL &&
-    process.env.SAP_CPI_CLIENT_ID &&
-    process.env.SAP_CPI_CLIENT_SECRET &&
-    process.env.SAP_CPI_TOKEN_URL &&
-    process.env.SAP_CPI_BASE_URL !== 'https://your-tenant.it-cpi.cfapps.sap.hana.ondemand.com'
-  );
+function isSAPConfigured(userId) {
+  const creds = tenantStore.getActiveTenantCredentials(userId);
+  return !!(creds && creds.baseUrl && creds.clientId && creds.clientSecret && creds.tokenUrl);
 }
 
 // ─── REAL: Check SAP CPI Failed Message Logs ──────────────────────────────────
-async function checkMessageProcessingLogs() {
-  if (!isSAPConfigured()) return simulateFallback('message_logs');
+async function checkMessageProcessingLogs(userId) {
+  if (!isSAPConfigured(userId)) return simulateFallback('message_logs');
 
   try {
     const { getFailedMessages, getMessageErrorInfo, getMessageRuns, mapSAPErrorToCode } = require('./sapCpiService');
@@ -34,14 +31,13 @@ async function checkMessageProcessingLogs() {
     if (failed.length === 0) return null;
 
     const recentFailed = failed.filter(msg => {
-    const logEndMs = parseInt(msg.LogEnd?.match(/\d+/)?.[0] || 0);
-    return logEndMs && new Date(logEndMs) > SERVER_START_TIME;
-  });
+      const logEndMs = parseInt(msg.LogEnd?.match(/\d+/)?.[0] || 0);
+      return logEndMs && new Date(logEndMs) > SERVER_START_TIME;
+    });
 
-  if (recentFailed.length === 0) return null;
+    if (recentFailed.length === 0) return null;
 
-    // Pick the most recent failure not already ticketed
-    const existingTickets = dataStore.getTickets();
+    const existingTickets = dataStore.getTickets(userId);
     const newFailure = recentFailed.find(msg => {
       const failureFingerprint = createIssueFingerprint({
         iflow: msg.IntegrationFlowName || msg.IntegrationFlowId || msg.ArtifactName,
@@ -53,16 +49,7 @@ async function checkMessageProcessingLogs() {
         }),
         errorMessage: msg.ErrorInformation || msg.MessageText || ''
       });
-      // const messageFingerprint = createMessageFingerprint({ sapMessageGuid: msg.MessageGuid });
 
-      // Skip if same MessageGuid already ticketed
-      // const guidMatch = existingTickets.some(t => {
-      //   const ticketMessageFingerprint = createMessageFingerprint({ sapMessageGuid: t.sapMessageGuid });
-      //   return messageFingerprint && ticketMessageFingerprint && messageFingerprint === ticketMessageFingerprint;
-      // });
-      // if (guidMatch) return false;
-
-      // Skip if same issue fingerprint already ticketed
       const duplicateMatch = existingTickets.some(t => {
         const ticketFingerprint = t.issueFingerprint
           ? normalizeFingerprint(t.issueFingerprint)
@@ -77,113 +64,53 @@ async function checkMessageProcessingLogs() {
         return ticketFingerprint && ticketFingerprint === failureFingerprint;
       });
       if (duplicateMatch) return false;
-
       return true;
     });
 
     if (!newFailure) return null;
 
-    // Enrich with full error info
     const errorInfo = await getMessageErrorInfo(newFailure.MessageGuid);
     const runs = await getMessageRuns(newFailure.MessageGuid);
     const lastRun = runs[runs.length - 1] || {};
-    const protocol = firstNonEmpty(
-      lastRun.TransportProtocol,
-      lastRun.Protocol,
-      lastRun.AdapterType,
-      lastRun.Channel,
-      lastRun.Transport,
-      lastRun.ProtocolType,
-      lastRun.TransportType
-    ) || 'N/A';
+
+    const protocolValue = firstNonEmpty(
+      lastRun.Protocol, newFailure.Protocol, lastRun.Transport, newFailure.Transport,
+      lastRun.AdapterType, lastRun.AdapterName, 'N/A'
+    );
 
     const sender = firstNonEmpty(
-      newFailure.Sender,
-      newFailure.SenderParty,
-      newFailure.SenderService,
-      newFailure.SenderName,
-      lastRun.Sender,
-      lastRun.SenderParty,
-      lastRun.SenderService,
-      lastRun.SenderName,
-      newFailure.SourceSystem,
-      newFailure.SenderAddress,
-      lastRun.SourceSystem
+      newFailure.Sender, newFailure.SenderParty, newFailure.SenderService, newFailure.SenderName,
+      lastRun.Sender, lastRun.SenderParty, lastRun.SenderService, lastRun.SenderName,
+      newFailure.SourceSystem, newFailure.SenderAddress, lastRun.SourceSystem
     );
 
     const receiver = firstNonEmpty(
-      newFailure.Receiver,
-      newFailure.ReceiverParty,
-      newFailure.ReceiverService,
-      newFailure.ReceiverName,
-      lastRun.Receiver,
-      lastRun.ReceiverParty,
-      lastRun.ReceiverService,
-      lastRun.ReceiverName,
-      newFailure.TargetSystem,
-      newFailure.ReceiverAddress,
-      lastRun.TargetSystem
-    );
-
-    const protocolValue = firstNonEmpty(
-      lastRun.Protocol,
-      newFailure.Protocol,
-      lastRun.Transport,
-      newFailure.Transport,
-      lastRun.AdapterType,
-      lastRun.AdapterName,
-      'N/A'
+      newFailure.Receiver, newFailure.ReceiverParty, newFailure.ReceiverService, newFailure.ReceiverName,
+      lastRun.Receiver, lastRun.ReceiverParty, lastRun.ReceiverService, lastRun.ReceiverName,
+      newFailure.TargetSystem, newFailure.ReceiverAddress, lastRun.TargetSystem
     );
 
     const adapterDetails = firstNonEmpty(
       [lastRun.AdapterName, lastRun.AdapterType, lastRun.Channel, lastRun.Transport, lastRun.Protocol].filter(Boolean).join(' | '),
-      lastRun.AdapterName,
-      lastRun.AdapterType,
-      lastRun.Channel,
-      lastRun.Transport,
-      newFailure.AdapterName,
-      newFailure.AdapterType,
-      sender,
-      receiver
+      lastRun.AdapterName, lastRun.AdapterType, lastRun.Channel, lastRun.Transport,
+      newFailure.AdapterName, newFailure.AdapterType, sender, receiver
     ) || 'N/A';
 
     let packageName = firstNonEmpty(
-      newFailure.IntegrationFlowPackageName,
-      newFailure.PackageName,
-      newFailure.IntegrationFlowPackageId,
-      newFailure.PackageId,
-      lastRun.IntegrationFlowPackageName,
-      lastRun.PackageName,
-      lastRun.IntegrationFlowPackageId,
-      lastRun.PackageId
+      newFailure.IntegrationFlowPackageName, newFailure.PackageName, newFailure.IntegrationFlowPackageId, newFailure.PackageId,
+      lastRun.IntegrationFlowPackageName, lastRun.PackageName, lastRun.IntegrationFlowPackageId, lastRun.PackageId
     );
     let packageId = firstNonEmpty(
-      newFailure.IntegrationFlowPackageId,
-      newFailure.PackageId,
-      newFailure.PackageUUID,
-      newFailure.PackageId,
-      lastRun.IntegrationFlowPackageId,
-      lastRun.PackageId,
-      lastRun.PackageUUID,
-      lastRun.Id
+      newFailure.IntegrationFlowPackageId, newFailure.PackageId, newFailure.PackageUUID, newFailure.PackageId,
+      lastRun.IntegrationFlowPackageId, lastRun.PackageId, lastRun.PackageUUID, lastRun.Id
     );
     let iflowName = firstNonEmpty(
-      newFailure.IntegrationFlowName,
-      newFailure.IntegrationFlowId,
-      newFailure.Name,
-      newFailure.ArtifactName,
-      lastRun.IntegrationFlowName,
-      lastRun.Name,
-      lastRun.ArtifactName
+      newFailure.IntegrationFlowName, newFailure.IntegrationFlowId, newFailure.Name, newFailure.ArtifactName,
+      lastRun.IntegrationFlowName, lastRun.Name, lastRun.ArtifactName
     );
     let iflowId = firstNonEmpty(
-      newFailure.IntegrationFlowId,
-      newFailure.IntegrationFlowName,
-      newFailure.ArtifactId,
-      newFailure.Id,
-      lastRun.IntegrationFlowId,
-      lastRun.ArtifactId,
-      lastRun.Id
+      newFailure.IntegrationFlowId, newFailure.IntegrationFlowName, newFailure.ArtifactId, newFailure.Id,
+      lastRun.IntegrationFlowId, lastRun.ArtifactId, lastRun.Id
     );
 
     if ((!packageName || !packageId || !iflowId) && (newFailure.IntegrationFlowName || newFailure.IntegrationFlowId || newFailure.ArtifactId || newFailure.Id)) {
@@ -202,7 +129,6 @@ async function checkMessageProcessingLogs() {
           flow.Name === newFailure.ArtifactId ||
           flow.IntegrationFlowName === newFailure.ArtifactId
         );
-
         if (matchedFlow) {
           packageName = packageName || matchedFlow.IntegrationFlowPackageName || matchedFlow.PackageName || matchedFlow.Package || matchedFlow.PackageId;
           packageId = packageId || matchedFlow.IntegrationFlowPackageId || matchedFlow.PackageId || matchedFlow.PackageUUID || matchedFlow.Id;
@@ -220,72 +146,65 @@ async function checkMessageProcessingLogs() {
     });
 
     return {
-  errorCode,
-  interface: newFailure.IntegrationArtifact?.Name || iflowName || 'SAP CPI',
-  iflow: iflowName || newFailure.IntegrationFlowName,
-  iflowId: iflowId || newFailure.IntegrationArtifact?.Id,
-  packageId: packageId || newFailure.IntegrationArtifact?.PackageId,
-  packageName: packageName || newFailure.IntegrationArtifact?.PackageName,
-  sender: sender || newFailure.Sender,
-  receiver: receiver || newFailure.Receiver,
-  adapterDetails,
-  protocol: protocolValue,
-  correlationId: newFailure.CorrelationId,
-  transactionId: newFailure.TransactionId,
-  logLevel: newFailure.LogLevel,
-  monitorUrl: newFailure.AlternateWebLink,
-  errorMessage: errorInfo || 'Message processing failed',
-  sapMessageGuid: newFailure.MessageGuid,
-  errorTimestamp: new Date(parseInt(newFailure.LogEnd?.match(/\d+/)?.[0] || Date.now())).toISOString(),
-  payload: {
-    messageGuid: newFailure.MessageGuid,
-    correlationId: newFailure.CorrelationId,
-    transactionId: newFailure.TransactionId,
-    packageId: newFailure.IntegrationArtifact?.PackageId,
-    packageName: newFailure.IntegrationArtifact?.PackageName,
-    iflowId: newFailure.IntegrationArtifact?.Id,
-    sender: newFailure.Sender,
-    receiver: newFailure.Receiver,
-    logStart: new Date(parseInt(newFailure.LogStart?.match(/\d+/)?.[0] || Date.now())).toISOString(),
-    logEnd: new Date(parseInt(newFailure.LogEnd?.match(/\d+/)?.[0] || Date.now())).toISOString(),
-    logLevel: newFailure.LogLevel,
-    adapterName: lastRun?.AdapterName,
-    monitorUrl: newFailure.AlternateWebLink
-  },
-  timestamp: new Date().toISOString()
-};
+      errorCode,
+      interface: newFailure.IntegrationArtifact?.Name || iflowName || 'SAP CPI',
+      iflow: iflowName || newFailure.IntegrationFlowName,
+      iflowId: iflowId || newFailure.IntegrationArtifact?.Id,
+      packageId: packageId || newFailure.IntegrationArtifact?.PackageId,
+      packageName: packageName || newFailure.IntegrationArtifact?.PackageName,
+      sender: sender || newFailure.Sender,
+      receiver: receiver || newFailure.Receiver,
+      adapterDetails,
+      protocol: protocolValue,
+      correlationId: newFailure.CorrelationId,
+      transactionId: newFailure.TransactionId,
+      logLevel: newFailure.LogLevel,
+      monitorUrl: newFailure.AlternateWebLink,
+      errorMessage: errorInfo || 'Message processing failed',
+      sapMessageGuid: newFailure.MessageGuid,
+      errorTimestamp: new Date(parseInt(newFailure.LogEnd?.match(/\d+/)?.[0] || Date.now())).toISOString(),
+      payload: {
+        messageGuid: newFailure.MessageGuid,
+        correlationId: newFailure.CorrelationId,
+        transactionId: newFailure.TransactionId,
+        packageId: newFailure.IntegrationArtifact?.PackageId,
+        packageName: newFailure.IntegrationArtifact?.PackageName,
+        iflowId: newFailure.IntegrationArtifact?.Id,
+        sender: newFailure.Sender,
+        receiver: newFailure.Receiver,
+        logStart: new Date(parseInt(newFailure.LogStart?.match(/\d+/)?.[0] || Date.now())).toISOString(),
+        logEnd: new Date(parseInt(newFailure.LogEnd?.match(/\d+/)?.[0] || Date.now())).toISOString(),
+        logLevel: newFailure.LogLevel,
+        adapterName: lastRun?.AdapterName,
+        monitorUrl: newFailure.AlternateWebLink
+      },
+      timestamp: new Date().toISOString()
+    };
   } catch (err) {
     logger.error(`[Monitor] SAP CPI message log check failed: ${err.message}`);
-    dataStore.addMonitoringLog({
+    dataStore.addMonitoringLog(userId, {
       type: 'ERROR',
       message: `SAP CPI API access failed: ${err.message}`,
       status: 'ERROR'
     });
-
     broadcastEvent('monitoring_status', {
-      status: 'ERROR',
-      mode: 'LIVE',
+      status: 'ERROR', mode: 'LIVE',
       message: `SAP CPI API access failed: ${err.message}`,
       timestamp: new Date().toISOString()
-    });
-
-    // Do not create a false CPI iFlow ticket when the SAP CPI API itself is inaccessible.
+    }, userId);
     return null;
   }
 }
 
 // ─── REAL: Check JMS Queue Buildup ───────────────────────────────────────────
-async function checkJMSQueues() {
-  if (!isSAPConfigured()) return null;
-
+async function checkJMSQueues(userId) {
+  if (!isSAPConfigured(userId)) return null;
   try {
     const { getJMSResources } = require('./sapCpiService');
     const brokers = await getJMSResources();
-
     for (const broker of brokers) {
       const queueSize = parseInt(broker.QueueNumber || 0);
       const threshold = parseInt(process.env.QUEUE_SIZE_THRESHOLD || 1000);
-
       if (queueSize > threshold) {
         return {
           errorCode: 'QUEUE_THRESHOLD_EXCEEDED',
@@ -305,9 +224,8 @@ async function checkJMSQueues() {
 }
 
 // ─── REAL: Check Certificate Expiry ──────────────────────────────────────────
-async function checkCertificates() {
-  if (!isSAPConfigured()) return null;
-
+async function checkCertificates(userId) {
+  if (!isSAPConfigured(userId)) return null;
   try {
     const { getCertificates } = require('./sapCpiService');
     const certs = await getCertificates();
@@ -316,23 +234,13 @@ async function checkCertificates() {
 
     for (const cert of certs) {
       if (!cert.ValidNotAfter) continue;
-
-      // SAP returns date as /Date(timestamp)/
       let expiry;
       const match = cert.ValidNotAfter.match(/\/Date\((\d+)\)\//);
-      if (match) {
-        expiry = parseInt(match[1]);
-      } else {
-        expiry = new Date(cert.ValidNotAfter).getTime();
-      }
-
+      expiry = match ? parseInt(match[1]) : new Date(cert.ValidNotAfter).getTime();
       const daysLeft = Math.floor((expiry - now) / (1000 * 60 * 60 * 24));
 
       if (daysLeft <= warningDays && daysLeft >= 0) {
-        // Check if already ticketed for this same certificate warning
-        const existing = dataStore.getTickets().find(t =>
-          t.certName === cert.Hexalias
-        );
+        const existing = dataStore.getTickets(userId).find(t => t.certName === cert.Hexalias);
         if (existing) continue;
 
         return {
@@ -342,13 +250,7 @@ async function checkCertificates() {
           certName: cert.Hexalias,
           daysUntilExpiry: daysLeft,
           errorMessage: `Certificate "${cert.Hexalias}" expiring in ${daysLeft} days (${new Date(expiry).toDateString()})`,
-          payload: {
-            alias: cert.Hexalias,
-            type: cert.KeyType,
-            validFrom: cert.ValidNotBefore,
-            validUntil: cert.ValidNotAfter,
-            daysLeft
-          }
+          payload: { alias: cert.Hexalias, type: cert.KeyType, validFrom: cert.ValidNotBefore, validUntil: cert.ValidNotAfter, daysLeft }
         };
       }
     }
@@ -360,23 +262,15 @@ async function checkCertificates() {
 }
 
 // ─── REAL: Check iFlow Runtime Status ────────────────────────────────────────
-async function checkIFlowStatus() {
-  if (!isSAPConfigured()) return null;
-
+async function checkIFlowStatus(userId) {
+  if (!isSAPConfigured(userId)) return null;
   try {
     const { getIntegrationFlows } = require('./sapCpiService');
     const iflows = await getIntegrationFlows();
-
-    const errored = iflows.find(f =>
-      f.Status === 'ERROR' || f.Status === 'FAILED'
-    );
-
+    const errored = iflows.find(f => f.Status === 'ERROR' || f.Status === 'FAILED');
     if (!errored) return null;
 
-    const existing = dataStore.getTickets().find(t =>
-      t.iflow === errored.Name &&
-      t.errorCode === 'HTTP_500'
-    );
+    const existing = dataStore.getTickets(userId).find(t => t.iflow === errored.Name && t.errorCode === 'HTTP_500');
     if (existing) return null;
 
     return {
@@ -384,13 +278,7 @@ async function checkIFlowStatus() {
       interface: errored.Name || 'Unknown',
       iflow: errored.Name,
       errorMessage: `iFlow "${errored.Name}" is in ${errored.Status} state`,
-      payload: {
-        id: errored.Id,
-        version: errored.Version,
-        status: errored.Status,
-        deployedBy: errored.DeployedBy,
-        deployedOn: errored.DeployedOn
-      }
+      payload: { id: errored.Id, version: errored.Version, status: errored.Status, deployedBy: errored.DeployedBy, deployedOn: errored.DeployedOn }
     };
   } catch (err) {
     logger.warn(`[Monitor] iFlow status check failed: ${err.message}`);
@@ -398,46 +286,40 @@ async function checkIFlowStatus() {
   }
 }
 
-// ─── FALLBACK: Simulate when SAP not configured ───────────────────────────────
-function simulateFallback(type) {
+// ─── FALLBACK: Simulate when a user has no tenant connected ─────────────────
+function simulateFallback() {
   const rand = Math.random();
-  if (rand > 0.12) return null; // 12% chance of simulated event
-
+  if (rand > 0.12) return null;
   const scenarios = [
     { errorCode: 'HTTP_401', interface: 'Salesforce', iflow: 'SF_Order_Sync_v2', errorMessage: 'HTTP 401 Unauthorized - OAuth token expired' },
     { errorCode: 'MAPPING_EXCEPTION', interface: 'SAP ECC', iflow: 'ECC_Customer_Sync', errorMessage: 'NullPointerException: Field CustomerID is null', failedField: 'CustomerID' },
     { errorCode: 'HTTP_503', interface: 'Banking API', iflow: 'Banking_Payment_Gateway', errorMessage: 'Service Unavailable - upstream at capacity' }
   ];
-
   return scenarios[Math.floor(Math.random() * scenarios.length)];
 }
 
-// ─── Main Monitoring Cycle ────────────────────────────────────────────────────
-async function runMonitoringCycle() {
-  if (!monitoringActive) return;
+// ─── Per-user cycle ────────────────────────────────────────────────────────
+async function runUserMonitoringCycle(userId, creds) {
+  const mode = creds ? 'LIVE' : 'SIMULATION';
+  logger.info(`[Monitor] Cycle for user ${userId} (${creds ? `tenant: ${creds.name}` : 'no tenant connected — simulation'})`);
 
-  const sapConfigured = isSAPConfigured();
-  logger.info(`[Monitor] Running cycle (SAP: ${sapConfigured ? 'REAL' : 'SIMULATED'})`);
-
-  dataStore.addMonitoringLog({
+  dataStore.addMonitoringLog(userId, {
     type: 'CHECK',
-    message: `Running monitoring cycle (mode: ${sapConfigured ? 'SAP CPI Live' : 'Simulation'})`,
+    message: `Running monitoring cycle (mode: ${mode})`,
     status: 'RUNNING'
   });
 
   broadcastEvent('monitoring_status', {
-    status: 'CHECKING',
-    mode: sapConfigured ? 'LIVE' : 'SIMULATION',
-    message: `Scanning ${sapConfigured ? 'SAP CPI' : 'simulated'} integrations...`,
+    status: 'CHECKING', mode,
+    message: `Scanning ${creds ? 'SAP CPI' : 'simulated'} integrations...`,
     timestamp: new Date().toISOString()
-  });
+  }, userId);
 
   try {
-    // Run all checks in parallel
-    const msgIssue = await checkMessageProcessingLogs();
-    const jmsIssue = await checkJMSQueues();
-    const certIssue = await checkCertificates();
-    const iflowIssue = await checkIFlowStatus();
+    const msgIssue = await checkMessageProcessingLogs(userId);
+    const jmsIssue = await checkJMSQueues(userId);
+    const certIssue = await checkCertificates(userId);
+    const iflowIssue = await checkIFlowStatus(userId);
 
     const rawIssues = [msgIssue, jmsIssue, certIssue, iflowIssue].filter(Boolean);
     const issues = [];
@@ -455,57 +337,53 @@ async function runMonitoringCycle() {
     }
 
     if (issues.length > 0) {
-      logger.info(`[Monitor] Found ${issues.length} real issue(s)`);
+      logger.info(`[Monitor] Found ${issues.length} issue(s) for user ${userId}`);
 
       for (const issue of issues) {
-      let result;
-      try {
-        const { processIncident } = require('../agents/cpiAgent');
-        result = await processIncident({ ...issue, timestamp: new Date().toISOString() });
-      } catch (agentErr) {
-        logger.error(`[Monitor] Agent processing failed: ${agentErr.message}`);
-        continue;
+        let result;
+        try {
+          const { processIncident } = require('../agents/cpiAgent');
+          result = await processIncident({ ...issue, timestamp: new Date().toISOString() }, userId);
+        } catch (agentErr) {
+          logger.error(`[Monitor] Agent processing failed: ${agentErr.message}`);
+          continue;
+        }
+
+        if (!result || !result.ticket) continue;
+
+        const alert = dataStore.addAlert(userId, {
+          type: issue.errorCode,
+          severity: ['HTTP_503', 'QUEUE_THRESHOLD_EXCEEDED'].includes(issue.errorCode) ? 'CRITICAL' : 'HIGH',
+          message: issue.errorMessage
+        });
+
+        dataStore.addMonitoringLog(userId, {
+          type: 'ALERT',
+          message: `Issue detected: ${issue.errorCode} in ${issue.interface}`,
+          status: 'ALERT_CREATED'
+        });
+
+        broadcastEvent('new_alert', {
+          alert, issue,
+          message: `🚨 ${issue.errorCode}: ${issue.errorMessage}`,
+          timestamp: new Date().toISOString()
+        }, userId);
       }
-
-      // Skip alert creation if this was a duplicate (no new ticket) or P4/LOW (no ticket)
-      if (!result || !result.ticket) continue;
-
-      const alert = dataStore.addAlert({
-        type: issue.errorCode,
-        severity: ['HTTP_503', 'QUEUE_THRESHOLD_EXCEEDED'].includes(issue.errorCode) ? 'CRITICAL' : 'HIGH',
-        message: issue.errorMessage
-      });
-
-      dataStore.addMonitoringLog({
-        type: 'ALERT',
-        message: `Issue detected: ${issue.errorCode} in ${issue.interface}`,
-        status: 'ALERT_CREATED'
-      });
-
-      broadcastEvent('new_alert', {
-        alert,
-        issue,
-        message: `🚨 ${issue.errorCode}: ${issue.errorMessage}`,
-        timestamp: new Date().toISOString()
-      });
-    }
     } else {
-      dataStore.addMonitoringLog({
+      dataStore.addMonitoringLog(userId, {
         type: 'CHECK',
-        message: `Monitoring cycle complete — no issues detected (${sapConfigured ? 'SAP CPI Live' : 'Simulation'})`,
+        message: `Monitoring cycle complete — no issues detected (${mode})`,
         status: 'OK'
       });
-
       broadcastEvent('monitoring_status', {
-        status: 'OK',
-        mode: sapConfigured ? 'LIVE' : 'SIMULATION',
+        status: 'OK', mode,
         message: 'All systems operational',
         timestamp: new Date().toISOString()
-      });
+      }, userId);
     }
   } catch (err) {
-    logger.error(`[Monitor] Cycle error: ${err.message}`);
-    dataStore.addMonitoringLog({
+    logger.error(`[Monitor] Cycle error for user ${userId}: ${err.message}`);
+    dataStore.addMonitoringLog(userId, {
       type: 'ERROR',
       message: `Monitoring cycle error: ${err.message}`,
       status: 'ERROR'
@@ -513,13 +391,33 @@ async function runMonitoringCycle() {
   }
 }
 
+// ─── Main entry point ──────────────────────────────────────────────────────
+// targetUserId omitted -> loop every user (used by the cron job).
+// targetUserId provided -> run just that one user (used by "trigger scan" from the UI).
+async function runMonitoringCycle(targetUserId) {
+  if (!monitoringActive && !targetUserId) return; // cron respects the active flag; manual triggers don't
+
+  const users = targetUserId
+    ? [{ id: targetUserId }]
+    : userStore.getAll();
+
+  for (const user of users) {
+    const creds = tenantStore.getActiveTenantCredentials(user.id);
+    if (creds) {
+      await requestContext.run({ userId: user.id, creds }, () => runUserMonitoringCycle(user.id, creds));
+    } else {
+      await runUserMonitoringCycle(user.id, null);
+    }
+  }
+}
+
 function initializeMonitoring() {
   const intervalSeconds = parseInt(process.env.MONITORING_INTERVAL_SECONDS) || 60;
-  logger.info(`[Monitor] Initializing — interval: ${intervalSeconds}s, SAP: ${isSAPConfigured() ? 'LIVE' : 'SIMULATION'}`);
+  logger.info(`[Monitor] Initializing — interval: ${intervalSeconds}s`);
   monitoringActive = true;
 
-  setTimeout(runMonitoringCycle, 5000);
-  monitoringJob = cron.schedule(`*/${intervalSeconds} * * * * *`, runMonitoringCycle);
+  setTimeout(() => runMonitoringCycle(), 5000);
+  monitoringJob = cron.schedule(`*/${intervalSeconds} * * * * *`, () => runMonitoringCycle());
   logger.info('[Monitor] Monitoring service started');
 }
 
@@ -529,11 +427,11 @@ function stopMonitoring() {
   logger.info('[Monitor] Monitoring service stopped');
 }
 
-function getMonitoringStatus() {
+function getMonitoringStatus(userId) {
   return {
     active: monitoringActive,
-    mode: isSAPConfigured() ? 'LIVE' : 'SIMULATION',
-    sapConfigured: isSAPConfigured(),
+    mode: isSAPConfigured(userId) ? 'LIVE' : 'SIMULATION',
+    sapConfigured: isSAPConfigured(userId),
     intervalSeconds: parseInt(process.env.MONITORING_INTERVAL_SECONDS) || 60,
     lastChecked: new Date().toISOString()
   };

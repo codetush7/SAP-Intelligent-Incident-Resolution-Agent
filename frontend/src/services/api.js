@@ -8,21 +8,24 @@ const api = axios.create({
   headers: { 'Content-Type': 'application/json' }
 });
 
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('auth_token');
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
 api.interceptors.response.use(
   res => res.data,
   err => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('auth_token');
+      window.location.reload(); // simplest reliable way to drop back to AuthProvider's logged-out state
+    }
     const message = err.response?.data?.error || err.message || 'Request failed';
     return Promise.reject(new Error(message));
   }
 );
 
-<<<<<<< Updated upstream
-=======
-export const investigationAPI = {
-  investigate: (ticketId) => api.get(`/investigation/${ticketId}`)
-};
-
->>>>>>> Stashed changes
 export const dashboardAPI = {
   getStats: () => api.get('/dashboard/stats'),
   getTrends: () => api.get('/dashboard/trends')
@@ -60,6 +63,22 @@ export const agentAPI = {
 export const analysisAPI = {
   analyze: (data) => api.post('/analysis/analyze', data),
   getScenarios: () => api.get('/analysis/scenarios')
+};
+
+export const tenantsAPI = {
+  getAll: () => api.get('/tenants'),
+  create: (data) => api.post('/tenants', data),
+  test: (id) => api.post(`/tenants/${id}/test`),
+  update: (id, data) => api.patch(`/tenants/${id}`, data),
+  activate: (id) => api.post(`/tenants/${id}/activate`),
+  delete: (id) => api.delete(`/tenants/${id}`)
+};
+
+export const jiraAPI = {
+  get: () => api.get('/jira'),
+  connect: (data) => api.post('/jira', data),
+  test: () => api.post('/jira/test'),
+  disconnect: () => api.delete('/jira')
 };
 
 export default api;

@@ -1,0 +1,22 @@
+{
+  "tenants": [
+    {
+      "id": "f6d7c796-4ee9-4428-ac73-37fde2acea7d",
+      "userId": "939635f0-b1a4-4329-9664-1c782b67fee1",
+      "name": "Incture Trial",
+      "environment": "DEV",
+      "baseUrl": "https://inccpidev.it-cpi001.cfapps.eu10.hana.ondemand.com",
+      "tokenUrl": "https://inccpidev.authentication.eu10.hana.ondemand.com/oauth/token",
+      "clientId": "sb-28bf8e67-9030-456e-9152-b1cb433c2b4f!b63626|it!b16077",
+      "clientSecretEnc": "d073f3ccf84ac0bb2494a91f9c0be5c1:e8030388a28696351c72bab3a80b794cbbb2f655c9dc19de7fb4d5afc3565bc5b9104ec45225d1b8cf37c6e07f17b76d198640ded7a6e3bc70da5db1db865a56262324bb077c36a1432dadea54678b6bf4700e393d335e485819de9d70004dbb",
+      "status": "CONNECTED",
+      "lastTestedAt": "2026-08-21T08:51:56.529Z",
+      "lastError": null,
+      "createdAt": "2026-08-21T08:51:54.747Z",
+      "updatedAt": "2026-08-21T08:51:54.747Z"
+    }
+  ],
+  "activeTenantIdByUser": {
+    "939635f0-b1a4-4329-9664-1c782b67fee1": "f6d7c796-4ee9-4428-ac73-37fde2acea7d"
+  }
+}
