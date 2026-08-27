@@ -8,6 +8,24 @@
       "status": "CONNECTED",
       "lastTestedAt": "2026-08-24T06:20:40.606Z",
       "lastError": null
+    },
+    "8cb5cb23-b1ed-4056-89cd-03ee1322a35a": {
+      "baseUrl": "https://incture-team-rupal.atlassian.net",
+      "email": "rupashree.biswal@incture.com",
+      "apiTokenEnc": "b0911cdcc409f4df9a36d5caf03e7957:5e48cef75a6d751c7e2e87758bcc447ac2ccfe0bd9d42aa03a4cd1cbbe9c8b086b8d8b3777350b97c77c5fc264dc8918e0a590179bd2831c366242c4df81b79a0bf5b95cee49789751073b129e7c3e9dcf11b2d5493e9051377a439923ce04c5d9cf219fc381f99a9e0e2b164f94b56179590614cff560929dd586fe42a8457f6142bde82b2def4ebfd85e4cb6a491fe757e89e966fe34661a6da3de05470506a1714136c519359ca493ca6d4d367ff03dbb73625ee8e4a6419b224163e3b4ab7c5a8ee4e3c8d2459dd75f22b69ca03d",
+      "projectKey": "CPI",
+      "status": "CONNECTED",
+      "lastTestedAt": "2026-08-25T06:56:22.055Z",
+      "lastError": null
+    },
+    "fed287f4-584e-4074-9884-763ae86849b2": {
+      "baseUrl": "https://incture-team-rupal.atlassian.net/browse/KAN-6",
+      "email": "rupashree.biswal@incture.com",
+      "apiTokenEnc": "2d790cd5e1de6ad8d302a86941cadc13:b84cf772944c599c55e7f8119e29f59b0ad0ad963eafcc15f2919d1ca4cbc7fe4fdd979e64ea60611ccdf84c9a9cc437a1f55c792667d29f2d828fb5990ffcb19c8884c6bc5ea9e3b88959d9588f163956e0cab8136d216f86ca6a4edf3cf050d11b8105e0d0da2d44b6f86919e5bd49acbcb09d5d5d89958fe0828e2f7bc29bf11d33916733e2409bdc7087c73ee2ff9fd69c5eadb3aac3b8079011b8ab79067e757c8c0c8991ba729ede60ed7803b8b8fe0c09443ac50fd56a5b9d26b42239e7f3a95fb15cf049998c224231b60a16",
+      "projectKey": "AI ERROR API",
+      "status": "CONNECTED",
+      "lastTestedAt": "2026-08-27T04:58:44.424Z",
+      "lastError": null
     }
   }
 }

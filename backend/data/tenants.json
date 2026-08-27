@@ -14,9 +14,41 @@
       "lastError": null,
       "createdAt": "2026-08-21T08:51:54.747Z",
       "updatedAt": "2026-08-21T08:51:54.747Z"
+    },
+    {
+      "id": "a494cdc9-a293-4eb6-ae76-66bb4787509e",
+      "userId": "8cb5cb23-b1ed-4056-89cd-03ee1322a35a",
+      "name": "Rupal",
+      "environment": "DEV",
+      "baseUrl": "https://e617aea8trial.it-cpitrial05.cfapps.us10-001.hana.ondemand.com",
+      "tokenUrl": "https://e617aea8trial.authentication.us10.hana.ondemand.com/oauth/token",
+      "clientId": "sb-0cac92fb-fbc9-40e5-b08b-67093893343e!b692885|it!b26655",
+      "clientSecretEnc": "638425aa71fcd3f023b427ae4908f788:ecb12d386a12da79a7575332c8c812d26fc7c0635e8d2e56045340180227222d709b424dab27382a69718996b3b659c0baeaf6150057613d8fa8fbd1b8b39ea2f99f90cb06ca9646f61c7183d881bafa7bed363f10de6f2109f6022b0cf4cda9",
+      "status": "CONNECTED",
+      "lastTestedAt": "2026-08-25T06:35:52.716Z",
+      "lastError": null,
+      "createdAt": "2026-08-25T06:35:33.030Z",
+      "updatedAt": "2026-08-25T06:35:33.030Z"
+    },
+    {
+      "id": "807107ed-361a-4d97-940c-667482b1dac7",
+      "userId": "fed287f4-584e-4074-9884-763ae86849b2",
+      "name": "Rupal tenent",
+      "environment": "DEV",
+      "baseUrl": "https://e617aea8trial.it-cpitrial05.cfapps.us10-001.hana.ondemand.com",
+      "tokenUrl": "https://e617aea8trial.authentication.us10.hana.ondemand.com/oauth/token",
+      "clientId": "sb-0cac92fb-fbc9-40e5-b08b-67093893343e!b692885|it!b26655",
+      "clientSecretEnc": "d96584c4cbb9750d1bd54c0492cbd972:6ab7bea86c04d09df488180b815cbba302f2bd06d149fae3f8bc1199dd0c1c29a547a697e084f70b96cd7ed952426c108e911ec2e007b7d40ad62799b36d2b415e89ab0d053ec59c0effff2e3517d8f822559946bf21c31efc7855ab3e979309",
+      "status": "CONNECTED",
+      "lastTestedAt": "2026-08-27T04:53:58.196Z",
+      "lastError": null,
+      "createdAt": "2026-08-27T04:53:55.794Z",
+      "updatedAt": "2026-08-27T04:53:55.794Z"
     }
   ],
   "activeTenantIdByUser": {
-    "939635f0-b1a4-4329-9664-1c782b67fee1": "f6d7c796-4ee9-4428-ac73-37fde2acea7d"
+    "939635f0-b1a4-4329-9664-1c782b67fee1": "f6d7c796-4ee9-4428-ac73-37fde2acea7d",
+    "8cb5cb23-b1ed-4056-89cd-03ee1322a35a": "a494cdc9-a293-4eb6-ae76-66bb4787509e",
+    "fed287f4-584e-4074-9884-763ae86849b2": "807107ed-361a-4d97-940c-667482b1dac7"
   }
 }

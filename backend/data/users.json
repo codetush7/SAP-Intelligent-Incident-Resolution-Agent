@@ -7,6 +7,22 @@
       "passwordHash": "$2a$12$Sxx0isarv8BTgBvGw8IO1.ezhXYY2lQrttXg11j9x44Ur9xZ96dLW",
       "role": "admin",
       "createdAt": "2026-08-19T12:42:14.256Z"
+    },
+    {
+      "id": "8cb5cb23-b1ed-4056-89cd-03ee1322a35a",
+      "name": "Rupal",
+      "email": "rupalbiswal24@gmail.com",
+      "passwordHash": "$2a$12$e6iYyfKyShBqNnLle6vSZekK3RiFoIsLnUVYGcR162QE.lXMeyj.6",
+      "role": "user",
+      "createdAt": "2026-08-25T06:32:55.601Z"
+    },
+    {
+      "id": "fed287f4-584e-4074-9884-763ae86849b2",
+      "name": "rupal",
+      "email": "rupashree.biswal@incture.com",
+      "passwordHash": "$2a$12$GHb.Y8BjRlqi2MJ4XGorZuSFOBWGYId4iYkoWjTKnyGuQQItCr0Xq",
+      "role": "user",
+      "createdAt": "2026-08-27T04:52:34.134Z"
     }
   ]
 }

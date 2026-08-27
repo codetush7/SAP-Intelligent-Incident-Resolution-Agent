@@ -80,5 +80,8 @@ export const jiraAPI = {
   test: () => api.post('/jira/test'),
   disconnect: () => api.delete('/jira')
 };
+export const investigationAPI = {
+  investigate: (ticketId) => api.get(`/investigation/${ticketId}`)
+};
 
 export default api;
