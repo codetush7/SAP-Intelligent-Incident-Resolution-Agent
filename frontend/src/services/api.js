@@ -9,7 +9,7 @@ const api = axios.create({
 });
 
 api.interceptors.request.use(config => {
-  const token = localStorage.getItem('auth_token');
+  const token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -18,8 +18,9 @@ api.interceptors.response.use(
   res => res.data,
   err => {
     if (err.response?.status === 401) {
+      sessionStorage.removeItem('auth_token');
       localStorage.removeItem('auth_token');
-      window.location.reload(); // simplest reliable way to drop back to AuthProvider's logged-out state
+      window.location.reload();
     }
     const message = err.response?.data?.error || err.message || 'Request failed';
     return Promise.reject(new Error(message));

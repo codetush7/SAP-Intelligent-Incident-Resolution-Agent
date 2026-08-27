@@ -22,17 +22,11 @@ export default function DashboardPage({ liveEvents = [], wsConnected }) {
     loadData();
   }, []);
 
-  useEffect(() => {
-    if (liveEvents.length > 0) {
-      loadData();
-    }
-  }, [liveEvents]);
-
   async function loadData() {
     try {
-      const [s, t] = await Promise.all([dashboardAPI.getStats(), dashboardAPI.getTrends()]);
+      const s = await dashboardAPI.getStats();
       setStats(s || {});
-      setTrends(Array.isArray(t) ? t : []);
+      setTrends(Array.isArray(s?.trends) ? s.trends : []);
     } catch (err) {
       console.error(err);
       setStats({});
