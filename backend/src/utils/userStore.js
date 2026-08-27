@@ -1,51 +1,74 @@
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
-const fileStore = require('./fileStore');
+const { getDb } = require('../config/database');
 const logger = require('./logger');
-
-const persisted = fileStore.load('users', { users: [] });
-const users = persisted.users;
-
-function persist() { fileStore.save('users', { users }); }
-
 
 function toPublic(user) {
   if (!user) return null;
-  return { id: user.id, name: user.name, email: user.email, role: user.role, createdAt: user.createdAt };
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role || 'user',
+    createdAt: user.createdAt
+  };
 }
 
-function findByEmail(email) {
-  return users.find(u => u.email.toLowerCase() === String(email).toLowerCase());
+async function findByEmail(email) {
+  if (!email) return null;
+  const db = getDb();
+  return db.findOne('users', { email: String(email).toLowerCase() });
 }
 
-function getAll() {
+async function findById(id) {
+  if (!id) return null;
+  const db = getDb();
+  return db.findOne('users', { id });
+}
+
+async function getAll() {
+  const db = getDb();
+  const users = await db.find('users');
   return users.map(toPublic);
-}
-function findById(id) {
-  return users.find(u => u.id === id);
 }
 
 async function create({ name, email, password }) {
-  if (findByEmail(email)) {
+  const normalizedEmail = String(email).toLowerCase();
+  const existing = await findByEmail(normalizedEmail);
+  if (existing) {
     throw new Error('An account with this email already exists.');
   }
+
+  const db = getDb();
+  const totalUsers = await db.count('users');
   const passwordHash = await bcrypt.hash(password, 12);
+  const now = new Date().toISOString();
+
   const user = {
     id: uuidv4(),
-    name,
-    email: email.toLowerCase(),
+    name: name.trim(),
+    email: normalizedEmail,
     passwordHash,
-    role: users.length === 0 ? 'admin' : 'user', // first signup becomes admin
-    createdAt: new Date().toISOString()
+    role: totalUsers === 0 ? 'admin' : 'user', // First signup is admin
+    createdAt: now,
+    updatedAt: now
   };
-  users.push(user);
-  persist();
-  logger.info(`[UserStore] User created: ${user.email}`);
+
+  await db.insert('users', user);
+  logger.info(`[UserStore] User created in DB: ${user.email} (${user.role})`);
   return user;
 }
 
 async function verifyPassword(user, password) {
+  if (!user || !user.passwordHash) return false;
   return bcrypt.compare(password, user.passwordHash);
 }
 
-module.exports = { create, findByEmail, findById, verifyPassword, toPublic, getAll };
+module.exports = {
+  create,
+  findByEmail,
+  findById,
+  verifyPassword,
+  toPublic,
+  getAll
+};

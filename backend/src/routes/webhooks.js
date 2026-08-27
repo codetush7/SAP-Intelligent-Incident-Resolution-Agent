@@ -3,12 +3,20 @@ const router = express.Router();
 const { processIncident } = require('../agents/cpiAgent');
 const logger = require('../utils/logger');
 
+const userStore = require('../utils/userStore');
+
 // POST /api/webhooks/cpi-alert
 // This endpoint receives alerts pushed from SAP CPI alerting rules
 router.post('/cpi-alert', async (req, res) => {
   try {
     const alertData = req.body;
     logger.info(`[Webhook] Received CPI alert: ${JSON.stringify(alertData)}`);
+
+    let userId = req.headers['x-user-id'] || req.query.userId;
+    if (!userId) {
+      const users = await userStore.getAll();
+      userId = users[0]?.id || 'system';
+    }
 
     // Map SAP CPI alert fields to our incident format
     const incident = {
@@ -21,7 +29,7 @@ router.post('/cpi-alert', async (req, res) => {
       timestamp: alertData.timestamp || new Date().toISOString()
     };
 
-    const result = await processIncident(incident);
+    const result = await processIncident(incident, userId);
     res.json({
       success: true,
       ticketNumber: result.ticket.ticketNumber,

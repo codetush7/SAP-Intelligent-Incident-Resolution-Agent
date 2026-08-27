@@ -11,7 +11,7 @@ export function useWebSocket(onMessage) {
   const connect = useCallback(() => {
     if (!mounted.current) return;
     try {
-      const token = localStorage.getItem('auth_token');
+      const token = sessionStorage.getItem('auth_token') || localStorage.getItem('auth_token');
       const wsUrlWithToken = token ? `${WS_URL}?token=${encodeURIComponent(token)}` : WS_URL;
       const ws = new WebSocket(wsUrlWithToken);
       wsRef.current = ws;

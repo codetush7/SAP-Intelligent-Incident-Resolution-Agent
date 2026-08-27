@@ -143,7 +143,7 @@ async function processIncident(incidentData, userId) {
   // P4 LOW — just log, no ticket, no Jira, no email
   if (!classification.createJira) {
     logger.info(`[AI Agent] P4/LOW issue detected — logging only, no ticket created`);
-    dataStore.addMonitoringLog(userId, {
+    await dataStore.addMonitoringLog(userId, {
       type: 'INFO',
       message: `P4 issue detected in ${incidentData.iflow || incidentData.interface} — logged only`,
       status: 'OK'
@@ -151,31 +151,31 @@ async function processIncident(incidentData, userId) {
     return { ticket: null, analysis, classification };
   }
 
-
   // Step 4.5 — Prevent duplicate tickets for the same iFlow issue
   const incidentFingerprint = normalizeFingerprint(
-  createIssueFingerprint({
-    iflow: incidentData.iflow || incidentData.interface,
-    packageId: incidentData.packageId,
-    packageName: incidentData.packageName,
-    errorCode: incidentData.errorCode,
-    errorMessage: incidentData.errorMessage
-  })
-);
+    createIssueFingerprint({
+      iflow: incidentData.iflow || incidentData.interface,
+      packageId: incidentData.packageId,
+      packageName: incidentData.packageName,
+      errorCode: incidentData.errorCode,
+      errorMessage: incidentData.errorMessage
+    })
+  );
 
-const existingTicket = dataStore.getTickets(userId).find(t => {
-  const ticketIssueFingerprint = t.issueFingerprint
-    ? normalizeFingerprint(t.issueFingerprint)
-    : normalizeFingerprint(createIssueFingerprint({
-      iflow: t.iflow || t.interface,
-      packageId: t.packageId,
-      packageName: t.packageName,
-      errorCode: t.errorCode,
-      errorMessage: t.errorMessage
-    }));
+  const allTickets = await dataStore.getTickets(userId);
+  const existingTicket = allTickets.find(t => {
+    const ticketIssueFingerprint = t.issueFingerprint
+      ? normalizeFingerprint(t.issueFingerprint)
+      : normalizeFingerprint(createIssueFingerprint({
+        iflow: t.iflow || t.interface,
+        packageId: t.packageId,
+        packageName: t.packageName,
+        errorCode: t.errorCode,
+        errorMessage: t.errorMessage
+      }));
 
-  return incidentFingerprint && ticketIssueFingerprint && incidentFingerprint === ticketIssueFingerprint;
-});
+    return incidentFingerprint && ticketIssueFingerprint && incidentFingerprint === ticketIssueFingerprint;
+  });
 
   if (existingTicket) {
     logger.info(`[AI Agent] Duplicate issue detected; existing ticket ${existingTicket.ticketNumber} will be reused.`);
@@ -188,8 +188,8 @@ const existingTicket = dataStore.getTickets(userId).find(t => {
     return existingTicket;
   }
 
-  // Step 5 — Create internal ticket
-  const ticket = dataStore.createTicket(userId,{
+  // Step 5 — Create internal ticket in DB
+  const ticket = await dataStore.createTicket(userId, {
     title: analysis.suggestedTitle || `${incidentData.errorCode} - ${incidentData.interface}`,
     description: `${analysis.rootCause}\n\nEvidence: ${analysis.evidence}\n\nImpact: ${analysis.impact}`,
     priority,
@@ -222,30 +222,25 @@ const existingTicket = dataStore.getTickets(userId).find(t => {
     systemSource: 'SAP_CPI_AI_AGENT',
     errorCode: incidentData.errorCode,
     sapMessageGuid: incidentData.sapMessageGuid,
-    payload: JSON.stringify(incidentData.payload || {}),
+    payload: typeof incidentData.payload === 'object' ? JSON.stringify(incidentData.payload || {}) : incidentData.payload,
     aiAnalyzed: true,
     certName: incidentData.certName,
     daysUntilExpiry: incidentData.daysUntilExpiry,
     queueSize: incidentData.queueSize,
     packageId: incidentData.packageId,
-    packageName: incidentData.packageName,
-    iflowId: incidentData.iflowId,
-    sender: incidentData.sender,
-    receiver: incidentData.receiver,
     correlationId: incidentData.correlationId,
-    errorTimestamp: incidentData.errorTimestamp,
     monitorUrl: incidentData.monitorUrl,
   });
 
   // Step 6 — Auto-create Jira ticket if configured
   let jiraResult = null;
   const jiraStore = require('../utils/jiraStore');
-  if (jiraStore.isConfigured(userId)) {
+  if (await jiraStore.isConfigured(userId)) {
     try {
       const { createJiraIssue } = require('../services/jiraService');
-      const creds = jiraStore.getCredentials(userId);
+      const creds = await jiraStore.getCredentials(userId);
       jiraResult = await createJiraIssue(ticket, creds);
-      dataStore.updateTicket(ticket.id, userId, {
+      await dataStore.updateTicket(ticket.id, userId, {
         jiraId: jiraResult.externalId,
         jiraKey: jiraResult.externalNumber,
         jiraUrl: jiraResult.externalUrl
@@ -265,7 +260,7 @@ const existingTicket = dataStore.getTickets(userId).find(t => {
 
   if (classification.sendEmail) {
     try {
-      const updatedTicket = dataStore.getTicketById(ticket.id, userId);
+      const updatedTicket = await dataStore.getTicketById(ticket.id, userId);
       await sendAlertEmail(updatedTicket, jiraResult?.externalNumber);
     } catch (emailErr) {
       logger.error(`[Email] Alert send failed: ${emailErr.message}`);
@@ -273,7 +268,7 @@ const existingTicket = dataStore.getTickets(userId).find(t => {
   }
 
   // Step 7 — Log and broadcast
-  dataStore.addAgentLog(userId,{
+  await dataStore.addAgentLog(userId, {
     action: 'TICKET_CREATED',
     ticketId: ticket.id,
     ticketNumber: ticket.ticketNumber,
@@ -284,14 +279,16 @@ const existingTicket = dataStore.getTickets(userId).find(t => {
     message: `Ticket ${ticket.ticketNumber} created${jiraResult ? ` → Jira ${jiraResult.externalNumber}` : ''}`
   });
 
-  dataStore.addMonitoringLog(userId, {
+  await dataStore.addMonitoringLog(userId, {
     type: 'TICKET',
     message: `Grok AI created ${ticket.ticketNumber}${jiraResult ? ` (Jira: ${jiraResult.externalNumber})` : ''} for ${incidentData.errorCode}`,
     status: 'TICKET_CREATED'
   });
 
+  const finalTicket = await dataStore.getTicketById(ticket.id, userId);
+
   broadcastEvent('ticket_created', {
-    ticket: dataStore.getTicketById(ticket.id),
+    ticket: finalTicket,
     analysis,
     jiraResult,
     message: `✅ ${ticket.ticketNumber} created${jiraResult ? ` + Jira ${jiraResult.externalNumber}` : ''}`,
@@ -304,7 +301,7 @@ const existingTicket = dataStore.getTickets(userId).find(t => {
     timestamp: new Date().toISOString()
   }, userId);
 
-  return { ticket: dataStore.getTicketById(ticket.id), analysis, jiraResult };
+  return { ticket: finalTicket, analysis, jiraResult };
 }
 
 // ─── AI Chat ──────────────────────────────────────────────────────────────────

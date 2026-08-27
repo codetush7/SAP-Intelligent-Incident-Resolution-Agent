@@ -1,9 +1,7 @@
-const url = require('url');
 const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
 const userStore = require('../utils/userStore');
-
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-insecure-jwt-secret-change-me';
+const { getJwtSecret } = require('../middleware/authMiddleware');
 
 let wss = null;
 const clients = new Map(); // ws -> userId
@@ -11,17 +9,18 @@ const clients = new Map(); // ws -> userId
 function setupWebSocket(websocketServer) {
   wss = websocketServer;
 
-  wss.on('connection', (ws, req) => {
+  wss.on('connection', async (ws, req) => {
     let userId = null;
     try {
-      const { query } = url.parse(req.url, true);
-      if (query.token) {
-        const payload = jwt.verify(query.token, JWT_SECRET);
-        const user = userStore.findById(payload.sub);
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      const token = parsedUrl.searchParams.get('token');
+      if (token) {
+        const payload = jwt.verify(token, getJwtSecret());
+        const user = await userStore.findById(payload.sub);
         if (user) userId = user.id;
       }
     } catch (err) {
-      logger.warn(`[WS] Token verification failed: ${err.message}`);
+      logger.debug(`[WS] Token verification failed: ${err.message}`);
     }
 
     if (!userId) {

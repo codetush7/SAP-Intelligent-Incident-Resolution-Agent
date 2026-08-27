@@ -15,14 +15,14 @@ function firstNonEmpty(...values) {
 let monitoringActive = false;
 let monitoringJob = null;
 
-function isSAPConfigured(userId) {
-  const creds = tenantStore.getActiveTenantCredentials(userId);
+async function isSAPConfigured(userId) {
+  const creds = await tenantStore.getActiveTenantCredentials(userId);
   return !!(creds && creds.baseUrl && creds.clientId && creds.clientSecret && creds.tokenUrl);
 }
 
 // ─── REAL: Check SAP CPI Failed Message Logs ──────────────────────────────────
 async function checkMessageProcessingLogs(userId) {
-  if (!isSAPConfigured(userId)) return simulateFallback('message_logs');
+  if (!(await isSAPConfigured(userId))) return simulateFallback('message_logs');
 
   try {
     const { getFailedMessages, getMessageErrorInfo, getMessageRuns, mapSAPErrorToCode } = require('./sapCpiService');
@@ -37,7 +37,7 @@ async function checkMessageProcessingLogs(userId) {
 
     if (recentFailed.length === 0) return null;
 
-    const existingTickets = dataStore.getTickets(userId);
+    const existingTickets = await dataStore.getTickets(userId);
     const newFailure = recentFailed.find(msg => {
       const failureFingerprint = createIssueFingerprint({
         iflow: msg.IntegrationFlowName || msg.IntegrationFlowId || msg.ArtifactName,
@@ -98,91 +98,103 @@ async function checkMessageProcessingLogs(userId) {
 
     let packageName = firstNonEmpty(
       newFailure.IntegrationFlowPackageName, newFailure.PackageName, newFailure.IntegrationFlowPackageId, newFailure.PackageId,
-      lastRun.IntegrationFlowPackageName, lastRun.PackageName, lastRun.IntegrationFlowPackageId, lastRun.PackageId
-    );
-    let packageId = firstNonEmpty(
-      newFailure.IntegrationFlowPackageId, newFailure.PackageId, newFailure.PackageUUID, newFailure.PackageId,
-      lastRun.IntegrationFlowPackageId, lastRun.PackageId, lastRun.PackageUUID, lastRun.Id
-    );
-    let iflowName = firstNonEmpty(
-      newFailure.IntegrationFlowName, newFailure.IntegrationFlowId, newFailure.Name, newFailure.ArtifactName,
-      lastRun.IntegrationFlowName, lastRun.Name, lastRun.ArtifactName
-    );
-    let iflowId = firstNonEmpty(
-      newFailure.IntegrationFlowId, newFailure.IntegrationFlowName, newFailure.ArtifactId, newFailure.Id,
-      lastRun.IntegrationFlowId, lastRun.ArtifactId, lastRun.Id
+      lastRun.IntegrationFlowPackageName, lastRun.PackageName, lastRun.IntegrationFlowPackageId, lastRun.PackageId,
+      newFailure.IntegrationArtifact?.PackageId, newFailure.IntegrationArtifact?.PackageName,
+      lastRun.IntegrationArtifact?.PackageId, lastRun.IntegrationArtifact?.PackageName
     );
 
-    if ((!packageName || !packageId || !iflowId) && (newFailure.IntegrationFlowName || newFailure.IntegrationFlowId || newFailure.ArtifactId || newFailure.Id)) {
+    let packageId = firstNonEmpty(
+      newFailure.IntegrationArtifact?.PackageId, newFailure.PackageId, newFailure.IntegrationFlowPackageId, newFailure.PackageUUID,
+      lastRun.IntegrationArtifact?.PackageId, lastRun.PackageId, lastRun.IntegrationFlowPackageId, lastRun.PackageUUID,
+      newFailure.Id, lastRun.Id
+    );
+
+    let iflowId = firstNonEmpty(
+      newFailure.IntegrationFlowId, newFailure.ArtifactId, newFailure.Id,
+      lastRun.IntegrationFlowId, lastRun.ArtifactId, lastRun.Id,
+      newFailure.IntegrationArtifact?.Id, lastRun.IntegrationArtifact?.Id
+    );
+
+    if ((!packageName || !packageId || !iflowId) && newFailure.IntegrationFlowName) {
       try {
         const { getIntegrationFlows } = require('./sapCpiService');
-        const integrationFlows = await getIntegrationFlows();
-        const matchedFlow = integrationFlows.find(flow =>
-          flow.Name === newFailure.IntegrationFlowName ||
-          flow.IntegrationFlowName === newFailure.IntegrationFlowName ||
-          flow.ArtifactId === newFailure.IntegrationFlowId ||
-          flow.Id === newFailure.IntegrationFlowId ||
-          flow.Name === newFailure.IntegrationFlowId ||
-          flow.IntegrationFlowId === newFailure.IntegrationFlowId ||
-          flow.Id === newFailure.ArtifactId ||
-          flow.ArtifactId === newFailure.ArtifactId ||
-          flow.Name === newFailure.ArtifactId ||
-          flow.IntegrationFlowName === newFailure.ArtifactId
-        );
-        if (matchedFlow) {
-          packageName = packageName || matchedFlow.IntegrationFlowPackageName || matchedFlow.PackageName || matchedFlow.Package || matchedFlow.PackageId;
-          packageId = packageId || matchedFlow.IntegrationFlowPackageId || matchedFlow.PackageId || matchedFlow.PackageUUID || matchedFlow.Id;
-          iflowName = iflowName || matchedFlow.IntegrationFlowName || matchedFlow.Name;
-          iflowId = iflowId || matchedFlow.IntegrationFlowId || matchedFlow.ArtifactId || matchedFlow.Id;
+        const allFlows = await getIntegrationFlows();
+        const matched = allFlows.find(f => f.Id === newFailure.IntegrationFlowName || f.Name === newFailure.IntegrationFlowName);
+        if (matched) {
+          if (!packageName) packageName = matched.PackageName || matched.PackageId || 'N/A';
+          if (!packageId) packageId = matched.PackageId || matched.PackageName || matched.Id || 'N/A';
+          if (!iflowId) iflowId = matched.Id || matched.Name || 'N/A';
         }
-      } catch (flowErr) {
-        logger.warn(`[Monitor] Could not enrich iflow/package metadata: ${flowErr.message}`);
+      } catch (e) {
+        logger.debug('[Monitor] Could not enrich package info from flow list: ' + e.message);
       }
     }
 
-    const errorCode = mapSAPErrorToCode({
-      ErrorInformation: errorInfo,
-      AdapterName: lastRun.AdapterName || newFailure.Sender || ''
+    const rawErrorInfo = firstNonEmpty(
+      errorInfo?.ErrorMessage, errorInfo?.ErrorInformation, errorInfo?.message, errorInfo?.error,
+      lastRun.ErrorInformation, lastRun.ErrorMessage, lastRun.MessageText,
+      newFailure.ErrorInformation, newFailure.ErrorMessage, newFailure.MessageText
+    ) || 'Message processing failed';
+
+    const normalizedCode = mapSAPErrorToCode({
+      ErrorInformation: rawErrorInfo,
+      AdapterName: adapterDetails,
+      Status: newFailure.Status
     });
 
+    const cleanErrorMessage = rawErrorInfo;
+
+    const errorTimestampMs = parseInt(newFailure.LogEnd?.match(/\d+/)?.[0] || newFailure.LogStart?.match(/\d+/)?.[0] || Date.now());
+
+    let monitorUrl = null;
+    try {
+      const activeTenant = await tenantStore.getActiveTenant(userId);
+      if (activeTenant?.baseUrl) {
+        monitorUrl = `${activeTenant.baseUrl}/shell/monitoring/Messages('${newFailure.MessageGuid}')`;
+      }
+    } catch {
+      monitorUrl = null;
+    }
+
     return {
-      errorCode,
-      interface: newFailure.IntegrationArtifact?.Name || iflowName || 'SAP CPI',
-      iflow: iflowName || newFailure.IntegrationFlowName,
-      iflowId: iflowId || newFailure.IntegrationArtifact?.Id,
-      packageId: packageId || newFailure.IntegrationArtifact?.PackageId,
-      packageName: packageName || newFailure.IntegrationArtifact?.PackageName,
-      sender: sender || newFailure.Sender,
-      receiver: receiver || newFailure.Receiver,
+      errorCode: normalizedCode,
+      errorId: newFailure.MessageGuid,
+      sapMessageGuid: newFailure.MessageGuid,
+      correlationId: newFailure.CorrelationId || null,
+      interface: newFailure.IntegrationFlowName || newFailure.IntegrationFlowId || 'CPI Integration',
+      iflow: newFailure.IntegrationFlowName || newFailure.IntegrationFlowId || 'Unknown iFlow',
+      iflowId: iflowId || 'N/A',
+      packageId: packageId || 'N/A',
+      packageName: packageName || 'N/A',
+      sender: sender || 'N/A',
+      receiver: receiver || 'N/A',
       adapterDetails,
       protocol: protocolValue,
-      correlationId: newFailure.CorrelationId,
-      transactionId: newFailure.TransactionId,
-      logLevel: newFailure.LogLevel,
-      monitorUrl: newFailure.AlternateWebLink,
-      errorMessage: errorInfo || 'Message processing failed',
-      sapMessageGuid: newFailure.MessageGuid,
-      errorTimestamp: new Date(parseInt(newFailure.LogEnd?.match(/\d+/)?.[0] || Date.now())).toISOString(),
+      errorMessage: cleanErrorMessage,
+      errorTimestamp: new Date(errorTimestampMs).toISOString(),
+      monitorUrl,
       payload: {
         messageGuid: newFailure.MessageGuid,
         correlationId: newFailure.CorrelationId,
-        transactionId: newFailure.TransactionId,
-        packageId: newFailure.IntegrationArtifact?.PackageId,
-        packageName: newFailure.IntegrationArtifact?.PackageName,
-        iflowId: newFailure.IntegrationArtifact?.Id,
-        sender: newFailure.Sender,
-        receiver: newFailure.Receiver,
-        logStart: new Date(parseInt(newFailure.LogStart?.match(/\d+/)?.[0] || Date.now())).toISOString(),
-        logEnd: new Date(parseInt(newFailure.LogEnd?.match(/\d+/)?.[0] || Date.now())).toISOString(),
-        logLevel: newFailure.LogLevel,
-        adapterName: lastRun?.AdapterName,
-        monitorUrl: newFailure.AlternateWebLink
+        status: newFailure.Status,
+        logStart: newFailure.LogStart,
+        logEnd: newFailure.LogEnd,
+        adapterDetails,
+        protocol: protocolValue,
+        sender,
+        receiver,
+        packageId,
+        packageName,
+        iflowId,
+        errorInfo: rawErrorInfo,
+        runsCount: runs.length,
+        monitorUrl
       },
       timestamp: new Date().toISOString()
     };
   } catch (err) {
     logger.error(`[Monitor] SAP CPI message log check failed: ${err.message}`);
-    dataStore.addMonitoringLog(userId, {
+    await dataStore.addMonitoringLog(userId, {
       type: 'ERROR',
       message: `SAP CPI API access failed: ${err.message}`,
       status: 'ERROR'
@@ -198,7 +210,7 @@ async function checkMessageProcessingLogs(userId) {
 
 // ─── REAL: Check JMS Queue Buildup ───────────────────────────────────────────
 async function checkJMSQueues(userId) {
-  if (!isSAPConfigured(userId)) return null;
+  if (!(await isSAPConfigured(userId))) return null;
   try {
     const { getJMSResources } = require('./sapCpiService');
     const brokers = await getJMSResources();
@@ -225,12 +237,13 @@ async function checkJMSQueues(userId) {
 
 // ─── REAL: Check Certificate Expiry ──────────────────────────────────────────
 async function checkCertificates(userId) {
-  if (!isSAPConfigured(userId)) return null;
+  if (!(await isSAPConfigured(userId))) return null;
   try {
     const { getCertificates } = require('./sapCpiService');
     const certs = await getCertificates();
     const warningDays = parseInt(process.env.CERT_EXPIRY_WARNING_DAYS || 30);
     const now = Date.now();
+    const existingTickets = await dataStore.getTickets(userId);
 
     for (const cert of certs) {
       if (!cert.ValidNotAfter) continue;
@@ -240,7 +253,7 @@ async function checkCertificates(userId) {
       const daysLeft = Math.floor((expiry - now) / (1000 * 60 * 60 * 24));
 
       if (daysLeft <= warningDays && daysLeft >= 0) {
-        const existing = dataStore.getTickets(userId).find(t => t.certName === cert.Hexalias);
+        const existing = existingTickets.find(t => t.certName === cert.Hexalias);
         if (existing) continue;
 
         return {
@@ -263,14 +276,15 @@ async function checkCertificates(userId) {
 
 // ─── REAL: Check iFlow Runtime Status ────────────────────────────────────────
 async function checkIFlowStatus(userId) {
-  if (!isSAPConfigured(userId)) return null;
+  if (!(await isSAPConfigured(userId))) return null;
   try {
     const { getIntegrationFlows } = require('./sapCpiService');
     const iflows = await getIntegrationFlows();
     const errored = iflows.find(f => f.Status === 'ERROR' || f.Status === 'FAILED');
     if (!errored) return null;
 
-    const existing = dataStore.getTickets(userId).find(t => t.iflow === errored.Name && t.errorCode === 'HTTP_500');
+    const existingTickets = await dataStore.getTickets(userId);
+    const existing = existingTickets.find(t => t.iflow === errored.Name && t.errorCode === 'HTTP_500');
     if (existing) return null;
 
     return {
@@ -303,7 +317,7 @@ async function runUserMonitoringCycle(userId, creds) {
   const mode = creds ? 'LIVE' : 'SIMULATION';
   logger.info(`[Monitor] Cycle for user ${userId} (${creds ? `tenant: ${creds.name}` : 'no tenant connected — simulation'})`);
 
-  dataStore.addMonitoringLog(userId, {
+  await dataStore.addMonitoringLog(userId, {
     type: 'CHECK',
     message: `Running monitoring cycle (mode: ${mode})`,
     status: 'RUNNING'
@@ -351,13 +365,13 @@ async function runUserMonitoringCycle(userId, creds) {
 
         if (!result || !result.ticket) continue;
 
-        const alert = dataStore.addAlert(userId, {
+        const alert = await dataStore.addAlert(userId, {
           type: issue.errorCode,
           severity: ['HTTP_503', 'QUEUE_THRESHOLD_EXCEEDED'].includes(issue.errorCode) ? 'CRITICAL' : 'HIGH',
           message: issue.errorMessage
         });
 
-        dataStore.addMonitoringLog(userId, {
+        await dataStore.addMonitoringLog(userId, {
           type: 'ALERT',
           message: `Issue detected: ${issue.errorCode} in ${issue.interface}`,
           status: 'ALERT_CREATED'
@@ -370,7 +384,7 @@ async function runUserMonitoringCycle(userId, creds) {
         }, userId);
       }
     } else {
-      dataStore.addMonitoringLog(userId, {
+      await dataStore.addMonitoringLog(userId, {
         type: 'CHECK',
         message: `Monitoring cycle complete — no issues detected (${mode})`,
         status: 'OK'
@@ -383,7 +397,7 @@ async function runUserMonitoringCycle(userId, creds) {
     }
   } catch (err) {
     logger.error(`[Monitor] Cycle error for user ${userId}: ${err.message}`);
-    dataStore.addMonitoringLog(userId, {
+    await dataStore.addMonitoringLog(userId, {
       type: 'ERROR',
       message: `Monitoring cycle error: ${err.message}`,
       status: 'ERROR'
@@ -392,17 +406,15 @@ async function runUserMonitoringCycle(userId, creds) {
 }
 
 // ─── Main entry point ──────────────────────────────────────────────────────
-// targetUserId omitted -> loop every user (used by the cron job).
-// targetUserId provided -> run just that one user (used by "trigger scan" from the UI).
 async function runMonitoringCycle(targetUserId) {
-  if (!monitoringActive && !targetUserId) return; // cron respects the active flag; manual triggers don't
+  if (!monitoringActive && !targetUserId) return;
 
   const users = targetUserId
     ? [{ id: targetUserId }]
-    : userStore.getAll();
+    : await userStore.getAll();
 
   for (const user of users) {
-    const creds = tenantStore.getActiveTenantCredentials(user.id);
+    const creds = await tenantStore.getActiveTenantCredentials(user.id);
     if (creds) {
       await requestContext.run({ userId: user.id, creds }, () => runUserMonitoringCycle(user.id, creds));
     } else {
@@ -427,11 +439,11 @@ function stopMonitoring() {
   logger.info('[Monitor] Monitoring service stopped');
 }
 
-function getMonitoringStatus(userId) {
+function getMonitoringStatus(userId, isSapConfig = false) {
   return {
     active: monitoringActive,
-    mode: isSAPConfigured(userId) ? 'LIVE' : 'SIMULATION',
-    sapConfigured: isSAPConfigured(userId),
+    mode: isSapConfig ? 'LIVE' : 'SIMULATION',
+    sapConfigured: Boolean(isSapConfig),
     intervalSeconds: parseInt(process.env.MONITORING_INTERVAL_SECONDS) || 60,
     lastChecked: new Date().toISOString()
   };

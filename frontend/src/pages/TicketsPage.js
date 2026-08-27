@@ -25,7 +25,6 @@ export default function TicketsPage({ liveEvents }) {
   const [actionLoading, setActionLoading] = useState(null);
 
   useEffect(() => { loadTickets(); }, []);
-  useEffect(() => { if (liveEvents.length > 0) loadTickets(); }, [liveEvents]);
 
   async function loadTickets() {
     try {

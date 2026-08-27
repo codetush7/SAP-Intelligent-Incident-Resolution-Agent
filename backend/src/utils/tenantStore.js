@@ -1,49 +1,9 @@
-const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
+const { getDb } = require('../config/database');
+const { encrypt, decrypt, maskSecret } = require('./encryption');
 const logger = require('./logger');
-const fileStore = require('./fileStore');
 
-const RAW_KEY = process.env.TENANT_ENCRYPTION_KEY || 'dev-only-insecure-key-change-me!';
-const KEY = crypto.createHash('sha256').update(RAW_KEY).digest();
-const IV_LENGTH = 16;
-
-if (!process.env.TENANT_ENCRYPTION_KEY) {
-  logger.warn('[TenantStore] TENANT_ENCRYPTION_KEY not set — using an insecure default. Set it in backend/.env for production.');
-}
-
-function encrypt(text) {
-  if (!text) return '';
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv('aes-256-cbc', KEY, iv);
-  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
-  return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
-}
-
-function decrypt(payload) {
-  if (!payload) return '';
-  try {
-    const [ivHex, dataHex] = payload.split(':');
-    const iv = Buffer.from(ivHex, 'hex');
-    const decipher = crypto.createDecipheriv('aes-256-cbc', KEY, iv);
-    const decrypted = Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]);
-    return decrypted.toString('utf8');
-  } catch (err) {
-    logger.error('[TenantStore] Failed to decrypt client secret: ' + err.message);
-    return '';
-  }
-}
-
-// ─── Persisted, per-user store ────────────────────────────────────────────────
-// Shape: { tenants: [...], activeTenantIdByUser: { [userId]: tenantId } }
-const persisted = fileStore.load('tenants', { tenants: [], activeTenantIdByUser: {} });
-const tenants = persisted.tenants;
-const activeTenantIdByUser = persisted.activeTenantIdByUser;
-
-function persist() { fileStore.save('tenants', { tenants, activeTenantIdByUser }); }
-
-function maskSecret() { return '••••••••••••'; }
-
-function toPublic(tenant, userId) {
+function toPublic(tenant) {
   if (!tenant) return null;
   return {
     id: tenant.id,
@@ -56,99 +16,140 @@ function toPublic(tenant, userId) {
     status: tenant.status,
     lastTestedAt: tenant.lastTestedAt,
     lastError: tenant.lastError,
-    active: tenant.id === activeTenantIdByUser[userId],
+    active: Boolean(tenant.isActive),
     createdAt: tenant.createdAt,
     updatedAt: tenant.updatedAt
   };
 }
 
-// Every function below is scoped to userId — never returns another user's data.
-function getAll(userId) {
-  return tenants.filter(t => t.userId === userId).map(t => toPublic(t, userId));
+async function getAll(userId) {
+  const db = getDb();
+  const tenants = await db.find('tenants', { userId });
+  return tenants.map(toPublic);
 }
 
-function getById(id, userId) {
-  return tenants.find(t => t.id === id && t.userId === userId);
+async function getById(id, userId) {
+  const db = getDb();
+  return db.findOne('tenants', { id, userId });
 }
 
-function getByIdPublic(id, userId) {
-  return toPublic(getById(id, userId), userId);
+async function getByIdPublic(id, userId) {
+  const tenant = await getById(id, userId);
+  return toPublic(tenant);
 }
 
-function create(userId, { name, environment, baseUrl, tokenUrl, clientId, clientSecret }) {
+async function create(userId, { name, environment, baseUrl, tokenUrl, clientId, clientSecret }) {
+  const db = getDb();
+  const existingCount = await db.count('tenants', { userId });
   const now = new Date().toISOString();
+
   const tenant = {
     id: uuidv4(),
     userId,
-    name,
+    name: name.trim(),
     environment: environment || 'DEV',
     baseUrl: (baseUrl || '').trim().replace(/\/+$/, ''),
     tokenUrl: (tokenUrl || '').trim(),
-    clientId,
+    clientId: (clientId || '').trim(),
     clientSecretEnc: encrypt(clientSecret),
     status: 'UNTESTED',
     lastTestedAt: null,
     lastError: null,
+    isActive: existingCount === 0, // First tenant is active by default
     createdAt: now,
     updatedAt: now
   };
-  tenants.push(tenant);
-  if (!activeTenantIdByUser[userId]) activeTenantIdByUser[userId] = tenant.id;
-  persist();
+
+  await db.insert('tenants', tenant);
+  logger.info(`[TenantStore] Tenant created in DB for user ${userId}: ${tenant.name}`);
   return tenant;
 }
 
-function update(id, userId, data) {
-  const tenant = getById(id, userId);
+async function update(id, userId, data) {
+  const db = getDb();
+  const tenant = await getById(id, userId);
   if (!tenant) return null;
-  ['name', 'environment', 'clientId'].forEach(f => {
-    if (data[f] !== undefined) tenant[f] = data[f];
+
+  const updateData = {};
+  ['name', 'environment', 'clientId'].forEach(field => {
+    if (data[field] !== undefined) updateData[field] = data[field];
   });
-  if (data.baseUrl !== undefined) tenant.baseUrl = data.baseUrl.trim().replace(/\/+$/, '');
-  if (data.tokenUrl !== undefined) tenant.tokenUrl = data.tokenUrl.trim();
-  if (data.clientSecret) tenant.clientSecretEnc = encrypt(data.clientSecret);
-  tenant.updatedAt = new Date().toISOString();
-  persist();
-  return tenant;
+
+  if (data.baseUrl !== undefined) updateData.baseUrl = data.baseUrl.trim().replace(/\/+$/, '');
+  if (data.tokenUrl !== undefined) updateData.tokenUrl = data.tokenUrl.trim();
+  if (data.clientSecret) updateData.clientSecretEnc = encrypt(data.clientSecret);
+  updateData.updatedAt = new Date().toISOString();
+
+  await db.update('tenants', { id, userId }, updateData);
+  return getById(id, userId);
 }
 
-function remove(id, userId) {
-  const idx = tenants.findIndex(t => t.id === id && t.userId === userId);
-  if (idx === -1) return false;
-  tenants.splice(idx, 1);
-  if (activeTenantIdByUser[userId] === id) {
-    const remaining = tenants.filter(t => t.userId === userId);
-    activeTenantIdByUser[userId] = remaining.length > 0 ? remaining[0].id : null;
-  }
-  persist();
-  return true;
-}
-
-function setStatus(id, userId, status, error = null) {
-  const tenant = getById(id, userId);
-  if (!tenant) return null;
-  tenant.status = status;
-  tenant.lastError = error;
-  tenant.lastTestedAt = new Date().toISOString();
-  persist();
-  return tenant;
-}
-
-function setActive(id, userId) {
-  const tenant = getById(id, userId);
+async function remove(id, userId) {
+  const db = getDb();
+  const tenant = await getById(id, userId);
   if (!tenant) return false;
-  activeTenantIdByUser[userId] = id;
-  persist();
+
+  const wasActive = Boolean(tenant.isActive);
+  const deleted = await db.remove('tenants', { id, userId });
+
+  if (deleted && wasActive) {
+    const remaining = await db.find('tenants', { userId });
+    if (remaining.length > 0) {
+      await db.update('tenants', { id: remaining[0].id }, { isActive: true });
+    }
+  }
+
+  return deleted;
+}
+
+async function setStatus(id, userId, status, error = null) {
+  const db = getDb();
+  const filter = userId ? { id, userId } : { id };
+  const tenant = await db.findOne('tenants', filter);
+  if (!tenant) return null;
+
+  const updateData = {
+    status,
+    lastError: error,
+    lastTestedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+
+  await db.update('tenants', filter, updateData);
+  return db.findOne('tenants', filter);
+}
+
+async function setActive(id, userId) {
+  const db = getDb();
+  const tenant = await getById(id, userId);
+  if (!tenant) return false;
+
+  // Deactivate all user's tenants
+  const allTenants = await db.find('tenants', { userId });
+  for (const t of allTenants) {
+    if (t.isActive) {
+      await db.update('tenants', { id: t.id }, { isActive: false });
+    }
+  }
+
+  // Activate selected tenant
+  await db.update('tenants', { id, userId }, { isActive: true });
   return true;
 }
 
-function getActiveTenant(userId) {
-  return getById(activeTenantIdByUser[userId], userId) || null;
+async function getActiveTenant(userId) {
+  const db = getDb();
+  let tenant = await db.findOne('tenants', { userId, isActive: true });
+  if (!tenant) {
+    // Fallback to the first tenant if none is marked active
+    const list = await db.find('tenants', { userId }, { limit: 1 });
+    tenant = list.length > 0 ? list[0] : null;
+  }
+  return tenant;
 }
 
-// Internal use only — never expose over the API.
-function getActiveTenantCredentials(userId) {
-  const tenant = getActiveTenant(userId);
+async function getActiveTenantCredentials(userId) {
+  const tenant = await getActiveTenant(userId);
   if (tenant) {
     return {
       id: tenant.id,
@@ -162,8 +163,8 @@ function getActiveTenantCredentials(userId) {
   return null;
 }
 
-function getDecryptedCredentials(id, userId) {
-  const tenant = getById(id, userId);
+async function getDecryptedCredentials(id, userId) {
+  const tenant = await getById(id, userId);
   if (!tenant) return null;
   return {
     id: tenant.id,
@@ -176,7 +177,16 @@ function getDecryptedCredentials(id, userId) {
 }
 
 module.exports = {
-  getAll, getById, getByIdPublic, create, update, remove,
-  setStatus, setActive, getActiveTenant, getActiveTenantCredentials,
-  getDecryptedCredentials, toPublic
+  getAll,
+  getById,
+  getByIdPublic,
+  create,
+  update,
+  remove,
+  setStatus,
+  setActive,
+  getActiveTenant,
+  getActiveTenantCredentials,
+  getDecryptedCredentials,
+  toPublic
 };
