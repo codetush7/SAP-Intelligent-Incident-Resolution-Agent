@@ -17,8 +17,14 @@ const jiraSchema = Joi.object({
 });
 
 // GET /api/jira — current connection status (token masked), scoped to this user
-router.get('/', (req, res) => {
-  res.json({ jira: jiraStore.toPublic(req.user.id) });
+router.get('/', async (req, res) => {
+  try {
+    const jira = await jiraStore.toPublic(req.user.id);
+    res.json({ jira });
+  } catch (err) {
+    logger.error(`[Jira] Failed to fetch Jira config: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/jira — save + immediately test the connection (calls /myself)
@@ -26,46 +32,63 @@ router.post('/', async (req, res) => {
   const { error, value } = jiraSchema.validate(req.body);
   if (error) return res.status(400).json({ error: error.details[0].message });
 
-  jiraStore.save(req.user.id, value);
-
   try {
-    const creds = jiraStore.getCredentials(req.user.id);
-    const result = await healthCheck(creds);
-    if (!result.connected) throw new Error(result.error);
-    jiraStore.setStatus(req.user.id, 'CONNECTED', null);
-    logger.info(`[Jira] User ${req.user.id} connected as ${result.user} to ${value.baseUrl}`);
-    return res.status(201).json({ jira: jiraStore.toPublic(req.user.id), test: result });
+    await jiraStore.save(req.user.id, value);
+
+    try {
+      const creds = await jiraStore.getCredentials(req.user.id);
+      const result = await healthCheck(creds);
+      if (!result.connected) throw new Error(result.error);
+      await jiraStore.setStatus(req.user.id, 'CONNECTED', null);
+      logger.info(`[Jira] User ${req.user.id} connected as ${result.user} to ${value.baseUrl}`);
+      const jira = await jiraStore.toPublic(req.user.id);
+      return res.status(201).json({ jira, test: result });
+    } catch (err) {
+      await jiraStore.setStatus(req.user.id, 'FAILED', err.message);
+      logger.warn(`[Jira] Connection test failed for user ${req.user.id}: ${err.message}`);
+      const jira = await jiraStore.toPublic(req.user.id);
+      return res.status(201).json({ jira, test: { connected: false, error: err.message } });
+    }
   } catch (err) {
-    jiraStore.setStatus(req.user.id, 'FAILED', err.message);
-    logger.warn(`[Jira] Connection test failed for user ${req.user.id}: ${err.message}`);
-    return res.status(201).json({ jira: jiraStore.toPublic(req.user.id), test: { connected: false, error: err.message } });
+    logger.error(`[Jira] Save Jira config error: ${err.message}`);
+    res.status(500).json({ error: err.message });
   }
 });
 
 // POST /api/jira/test — re-test the current user's connection
 router.post('/test', async (req, res) => {
-  if (!jiraStore.isConfigured(req.user.id)) {
-    return res.status(404).json({ error: 'Jira is not connected yet' });
-  }
-
   try {
-    const creds = jiraStore.getCredentials(req.user.id);
-    const result = await healthCheck(creds);
-    if (!result.connected) throw new Error(result.error);
-    jiraStore.setStatus(req.user.id, 'CONNECTED', null);
-    return res.json({ jira: jiraStore.toPublic(req.user.id), test: result });
+    if (!(await jiraStore.isConfigured(req.user.id))) {
+      return res.status(404).json({ error: 'Jira is not connected yet' });
+    }
+
+    try {
+      const creds = await jiraStore.getCredentials(req.user.id);
+      const result = await healthCheck(creds);
+      if (!result.connected) throw new Error(result.error);
+      await jiraStore.setStatus(req.user.id, 'CONNECTED', null);
+      const jira = await jiraStore.toPublic(req.user.id);
+      return res.json({ jira, test: result });
+    } catch (err) {
+      await jiraStore.setStatus(req.user.id, 'FAILED', err.message);
+      logger.warn(`[Jira] Re-test failed for user ${req.user.id}: ${err.message}`);
+      const jira = await jiraStore.toPublic(req.user.id);
+      return res.json({ jira, test: { connected: false, error: err.message } });
+    }
   } catch (err) {
-    jiraStore.setStatus(req.user.id, 'FAILED', err.message);
-    logger.warn(`[Jira] Re-test failed for user ${req.user.id}: ${err.message}`);
-    return res.json({ jira: jiraStore.toPublic(req.user.id), test: { connected: false, error: err.message } });
+    res.status(500).json({ error: err.message });
   }
 });
 
 // DELETE /api/jira — disconnect and remove stored credentials for this user
-router.delete('/', (req, res) => {
-  jiraStore.remove(req.user.id);
-  logger.info(`[Jira] User ${req.user.id} disconnected Jira`);
-  res.json({ jira: null });
+router.delete('/', async (req, res) => {
+  try {
+    await jiraStore.remove(req.user.id);
+    logger.info(`[Jira] User ${req.user.id} disconnected Jira`);
+    res.json({ jira: null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

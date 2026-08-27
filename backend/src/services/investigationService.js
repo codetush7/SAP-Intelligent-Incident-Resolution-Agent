@@ -95,8 +95,8 @@ function getChangeContext(ticket) {
 }
 
 // ─── Step 4: Similar incidents — real comparison against this user's own tickets ──
-function findSimilarIncidents(ticket, userId) {
-  const allTickets = dataStore.getTickets(userId).filter(t => t.id !== ticket.id);
+async function findSimilarIncidents(ticket, userId) {
+  const allTickets = (await dataStore.getTickets(userId)).filter(t => t.id !== ticket.id);
 
   const similar = allTickets
     .map(t => {
@@ -118,7 +118,7 @@ function findSimilarIncidents(ticket, userId) {
     matchedOn: x.reasons,
     previousRootCause: x.ticket.rootCause || 'Not recorded',
     previousResolution: x.ticket.resolutionNotes || (x.ticket.status === 'RESOLVED' ? 'Marked resolved (no notes recorded)' : null),
-    outcome: x.ticket.status
+    resolvedAt: x.ticket.updatedAt || null
   }));
 }
 
@@ -191,7 +191,7 @@ async function runInvestigation(ticketId, userId) {
 
   stamp('Incident Detected');
 
-  const ticket = dataStore.getTicketById(ticketId, userId);
+  const ticket = await dataStore.getTicketById(ticketId, userId);
   if (!ticket) {
     throw new Error('Incident not found');
   }
@@ -201,7 +201,7 @@ async function runInvestigation(ticketId, userId) {
 
   const evidence = await collectEvidence(ticket, userId);
   const changeContext = getChangeContext(ticket);
-  const similarIncidents = findSimilarIncidents(ticket, userId);
+  const similarIncidents = await findSimilarIncidents(ticket, userId);
   stamp('AI Analysis Started');
 
   stamp('Evidence Correlated');

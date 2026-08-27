@@ -88,7 +88,7 @@ try {
 }
 
 async function updateJiraIssue(creds, issueKey, updates) {
-  if (!jiraStore.isConfigured()) return null;
+  if (!creds || !creds.baseUrl) return null;
 
   const transitionMap = {
     'IN_PROGRESS': 'In Progress',

@@ -3,6 +3,9 @@ const router = express.Router();
 const { processIncident, runAIChat } = require('../agents/cpiAgent');
 const dataStore = require('../utils/dataStore');
 const logger = require('../utils/logger');
+const { requireAuth } = require('../middleware/authMiddleware');
+
+router.use(requireAuth);
 
 // POST /api/agent/process-incident
 router.post('/process-incident', async (req, res) => {
@@ -12,7 +15,7 @@ router.post('/process-incident', async (req, res) => {
       return res.status(400).json({ error: 'errorCode is required' });
     }
 
-    const result = await processIncident(incidentData);
+    const result = await processIncident(incidentData, req.user.id);
     res.json({
       success: true,
       ticket: result.ticket,
@@ -33,11 +36,14 @@ router.post('/chat', async (req, res) => {
       return res.status(400).json({ error: 'messages array is required' });
     }
 
+    const stats = await dataStore.getStats(req.user.id);
+    const tickets = await dataStore.getTickets(req.user.id);
+
     // Build context from current system state
     const context = {
-      openTickets: dataStore.getStats().open,
-      activeAlerts: dataStore.getStats().activeAlerts,
-      recentTickets: dataStore.getTickets().slice(0, 3).map(t => ({
+      openTickets: stats.open,
+      activeAlerts: stats.activeAlerts,
+      recentTickets: tickets.slice(0, 3).map(t => ({
         ticketNumber: t.ticketNumber,
         title: t.title,
         priority: t.priority,
@@ -48,8 +54,8 @@ router.post('/chat', async (req, res) => {
     };
 
     const response = await runAIChat(messages, context);
-    
-    dataStore.addAgentLog({
+
+    await dataStore.addAgentLog(req.user.id, {
       action: 'CHAT_INTERACTION',
       message: `AI chat response generated (${response.length} chars)`
     });
@@ -62,14 +68,19 @@ router.post('/chat', async (req, res) => {
 });
 
 // GET /api/agent/logs
-router.get('/logs', (req, res) => {
-  res.json(dataStore.getAgentLogs().slice(0, 50));
+router.get('/logs', async (req, res) => {
+  try {
+    const logs = await dataStore.getAgentLogs(req.user.id);
+    res.json(logs.slice(0, 50));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/agent/simulate - Trigger a simulated incident for demo
 router.post('/simulate', async (req, res) => {
   const { scenario } = req.body;
-  
+
   const scenarios = {
     api_failure: {
       errorCode: 'HTTP_401',
@@ -113,7 +124,7 @@ router.post('/simulate', async (req, res) => {
   const incidentData = scenarios[scenario] || scenarios['api_failure'];
 
   try {
-    const result = await processIncident({ ...incidentData, timestamp: new Date().toISOString() });
+    const result = await processIncident({ ...incidentData, timestamp: new Date().toISOString() }, req.user.id);
     res.json({
       success: true,
       ticket: result.ticket,

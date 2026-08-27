@@ -35,7 +35,7 @@ router.post('/login', async (req, res) => {
   const { error, value } = loginSchema.validate(req.body);
   if (error) return res.status(400).json({ error: error.details[0].message });
 
-  const user = userStore.findByEmail(value.email);
+  const user = await userStore.findByEmail(value.email);
   if (!user || !(await userStore.verifyPassword(user, value.password))) {
     return res.status(401).json({ error: 'Invalid email or password' });
   }
