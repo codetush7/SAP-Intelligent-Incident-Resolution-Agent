@@ -40,7 +40,7 @@
       "clientId": "sb-0cac92fb-fbc9-40e5-b08b-67093893343e!b692885|it!b26655",
       "clientSecretEnc": "d96584c4cbb9750d1bd54c0492cbd972:6ab7bea86c04d09df488180b815cbba302f2bd06d149fae3f8bc1199dd0c1c29a547a697e084f70b96cd7ed952426c108e911ec2e007b7d40ad62799b36d2b415e89ab0d053ec59c0effff2e3517d8f822559946bf21c31efc7855ab3e979309",
       "status": "CONNECTED",
-      "lastTestedAt": "2026-08-27T04:53:58.196Z",
+      "lastTestedAt": "2026-08-31T05:58:03.086Z",
       "lastError": null,
       "createdAt": "2026-08-27T04:53:55.794Z",
       "updatedAt": "2026-08-27T04:53:55.794Z"
