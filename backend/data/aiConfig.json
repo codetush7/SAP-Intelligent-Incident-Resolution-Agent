@@ -1,0 +1,5 @@
+{
+  "provider": "gemini",
+  "model": "gemini-3.6-flash",
+  "apiKey": "f30f67325ebf8c5d5531d33d2ddd7b0a:20b9aefb2dc0d18cbb1e6f42310be8d3c3c15adb9ccd92a74d297d9a09d1a1a80e116c7d51e3259b49848bd09d8a9764a41a39a357123e4c176083c7676d76c1"
+}
